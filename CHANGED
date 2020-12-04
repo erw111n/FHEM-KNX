@@ -1,4 +1,4 @@
- - change: 10_KNX.pm:  20201202 
+ - change: 10_KNX:  20201202 
    rework etlicher dpt1.subtypen: 
      betrifft: dpt1.004-dpt1.007,dpt1.011-dpt1.018,dpt1.020-dpt1.023
      es wird jetzt der Text lt. KNX-standard verwendet.
