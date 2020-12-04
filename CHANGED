@@ -1,12 +1,12 @@
 ﻿# Add changes at the top of the list. Keep it in ASCII, and 80-char wide.
 # Do not insert empty lines here, update check depends on it. - change:  
- - bugfix:  77_hugo: testing git
+ - bugfix:  77_hugo.pm: testing git
                      if working as expected
  - change: 10_KNX.pm:  20201003 
    rework etlicher dpt1.subtypen: 
      betrifft: dpt1.004-dpt1.007,dpt1.011-dpt1.018,dpt1.020-dpt1.023
      es wird jetzt der Text lt. KNX-standard verwendet.
-     das kann evtl. inkompatibilit�ten f�r notifies, doif's,
+     das kann evtl. inkompatibilitäten für notifies, doif's,
      readingsproxy, ... definitionen haben, bitte um check bzw. 
      anpassung und test!
      z.B. wird ein dpt1.023 jetzt als <b>move_up_down</b> / 
