@@ -1,0 +1,23 @@
+ï»¿# Add changes at the top of the list. Keep it in ASCII, and 80-char wide.
+# Do not insert empty lines here, update check depends on it.
+ - bugfix:  77_Hugo: testing git
+                     if working as expected
+ 2020-12-04 change:  10_KNX.pm: 
+   rework etlicher dpt1.subtypen: 
+     betrifft: dpt1.004-dpt1.007,dpt1.011-dpt1.018,dpt1.020-dpt1.023
+     es wird jetzt der Text lt. KNX-standard verwendet.
+     das kann evtl. inkompatibilitäten für notifies, doif's,
+     readingsproxy, ... definitionen haben, bitte um check bzw. 
+     anpassung und test!
+     z.B. wird ein dpt1.023 jetzt als <b>move_up_down</b> / 
+	 <b>move_and_step_mode</b> dargestellt, bisher on/off.
+     Alle Texe mit mehr als einem Wort sind mittels '_' verbunden, 
+     sonsts funktioniert das FHEM-WEB pulldown nicht! 
+     z.B: no_action / reset
+   dpt6.010 neu - entspricht exakt dpt6
+   putCmd funktioniert auf allen Definitions-optionen, 
+     also set/get/listenonly, und auch wenn keine option angegeben.
+     Beispiel dazu in der commandRef.
+   dpt19 complete rework, bei set werden auch Wochentag, Sommerzeit 
+     und die entsprechenden flags korrekt gesetzt.
+   docu: dpt's & common attributes jetzt 2-spaltig
