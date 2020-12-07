@@ -1,5 +1,4 @@
- - change: 10_KNX:  20201202 
-   rework etlicher dpt1.subtypen: 
+ - change: 10_KNX:  20201202 rework etlicher dpt1.subtypen: 
      betrifft: dpt1.004-dpt1.007,dpt1.011-dpt1.018,dpt1.020-dpt1.023
      es wird jetzt der Text lt. KNX-standard verwendet.
      das kann evtl. inkompatibilitäten für notifies, doif's,
@@ -17,3 +16,4 @@
    dpt19 complete rework, bei set werden auch Wochentag, Sommerzeit 
      und die entsprechenden flags korrekt gesetzt.
    docu: dpt's & common attributes jetzt 2-spaltig
+- change: 10_KNX: 20201207 PBP changes, fix dpt16
