@@ -5,7 +5,7 @@
         rework etlicher dpt1.subtypen: 
           betrifft: dpt1.004-dpt1.007,dpt1.011-dpt1.018,dpt1.020-dpt1.023
           es wird jetzt der Text lt. KNX-standard verwendet.
-          das kann evtl. inkompatibilitäteen für notifies, doif's,
+          das kann evtl. inkompatibilitäten für notifies, doif's,
           readingsproxy, ... definitionen haben, bitte um check bzw. anpassung
           und test! 
           z.B. wird ein dpt1.023 jetzt als <b>move_up_down</b> / 
@@ -20,5 +20,5 @@
         dpt19 complete rework, bei set werden auch Wochentag, Sommerzeit 
           und die entsprechenden flags korrekt gesetzt.
         docu: dpt's & common attributes jetzt 2-spaltig
-
 2020-12-07 fixed dpt16, start PBP changes
+2020-12-10 add docu example for dpt16, fix docu indent.

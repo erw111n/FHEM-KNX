@@ -39,7 +39,8 @@
 # HAUSWART 20201113 fixed dpt19 #91650, KNX_hexToName2
 # MH  20201122 reworked most of dpt1, added dpt6.010, reworked dpt19, fixed (hopefully) putCmd, corrcetions to docu
 # MH  20201202 dpt10 compatibility with widgetoverride :time, docu formatting
-# MH  202012xx improve code (PerlBestPractices) changes marked with #PBP, added x-flag to most of regex, fixed dpt16 
+# MH  20201207 improve code (PerlBestPractices) changes marked with #PBP, added x-flag to most of regex, fixed dpt16 
+# MH  20201210 add docu example for dpt16, fix docu indent.
 
 
 package main;
@@ -105,11 +106,10 @@ my $PAT_GAD_SUFFIX = 'nosuffix';
 my $PAT_GAD_DPT = 'dpt\d*\.?\d*';
 #pattern for date
 my $PAT_DTSEP = '_'; # date/time separator
-#my $PAT_DATE = qr/(3[01]|[0-2]?[0-9])\.(1[0-2]|0?[0-9])\.(19[0-9][0-9]|2[01][0-9][0-9])/ix; #PBP 
 my $PAT_DATE = qr/(3[01]|[0-2]?[0-9])\.(1[0-2]|0?[0-9])\.((19|20)[0-9][0-9])/ix; #PBP
 #pattern for time
 my $PAT_TIME = qr/(2[0-4]|[0?1][0-9]):(60|[0?1-5]?[0-9]):(60|[0?1-5]?[0-9])/ix; #PBP
-my $PAT_DPT16_CLR = qr/>CLR</ix;
+my $PAT_DPT16_CLR = qr/>CLR</ix; #MH
 
 #CODE is the identifier for the en- and decode algos. See encode and decode functions
 #UNIT is appended to state for a better reading
@@ -143,7 +143,6 @@ my %dpttypes = (
 	"dpt1.019"      => {CODE=>"dpt1", UNIT=>"", FACTOR=>undef, OFFSET=>undef, PATTERN=>qr/((on)|(off)|(0?1)|(0?0)|(closed)|(open))$/ix, MIN=>"closed", MAX=>"open"},
 	"dpt1.021"      => {CODE=>"dpt1", UNIT=>"", FACTOR=>undef, OFFSET=>undef, PATTERN=>qr/((on)|(off)|(0?1)|(0?0)|(logical_or)|(logical_and))$/ix, MIN=>"logical_or", MAX=>"logical_and"},
 	"dpt1.022"      => {CODE=>"dpt1", UNIT=>"", FACTOR=>undef, OFFSET=>undef, PATTERN=>qr/((on)|(off)|(0?1)|(0?0)|(scene_A)|(scene_B))$/ix, MIN=>"scene_A", MAX=>"scene_B"},
-#PBP	"dpt1.023"      => {CODE=>"dpt1", UNIT=>"", FACTOR=>undef, OFFSET=>undef, PATTERN=>qr/((on)|(off)|(0?1)|(0?0)|("move_up_down)|(move_and_step_mode))$/ix, MIN=>"move_up_down", MAX=>"move_and_step_mode"},
 	"dpt1.023"      => {CODE=>"dpt1", UNIT=>"", FACTOR=>undef, OFFSET=>undef, PATTERN=>qr/((on)|(off)|(0?1)|(0?0)|(move_(up_down|and_step_mode)))$/ix, MIN=>"move_up_down", MAX=>"move_and_step_mode"},
 
 	#Step value (two-bit)
@@ -249,8 +248,6 @@ my %dpttypes = (
 #This declares the interface to fhem
 #############################
 sub
-#KNX_Initialize($) {
-#	my ($hash) = @_;
 KNX_Initialize {  #PBP
 	my $hash = shift // return; #PBP
 
@@ -284,8 +281,6 @@ KNX_Initialize {  #PBP
 #Is called at every define
 #############################
 sub
-#KNX_Define($$) {
-#	my ($hash, $def) = @_;
 KNX_Define { #PBP
 	my $hash = shift // return;
 	my $def = shift;
@@ -645,8 +640,6 @@ KNX_Define { #PBP
 #Is called at every delete / shutdown
 #############################
 sub
-#KNX_Undef($$) {
-#	my ($hash, $name) = @_;
 KNX_Undef { #PBP
 	my $hash = shift;
 	my $name = shift;
@@ -682,8 +675,6 @@ KNX_Undef { #PBP
 #The answer is treated as regular telegram
 #############################
 sub
-#KNX_Get($@) {
-#	my ($hash, @a) = @_;
 KNX_Get {  #PBP
 	my $hash = shift;
 	my @a = shift;
@@ -746,11 +737,7 @@ KNX_Get {  #PBP
 #Does something according the given cmd...
 #############################
 sub
-#KNX_Set($@) {
-#	my ($hash, @a) = @_;
 KNX_Set { #PBP
-#	my $hash = shift;
-#	my @a = @_;
 	my ($hash, @a) = @_;
 	my $name = $hash->{NAME};
 	my $ret = "";
@@ -1056,7 +1043,6 @@ KNX_Set { #PBP
 #In case setstate is executed, a readingsupdate is initiated
 #############################
 sub
-#KNX_State($$$$) {
 KNX_State { #PBP
 	my ($hash, $time, $reading, $value) = @_;
 	my $name = $hash->{NAME};
@@ -1070,8 +1056,8 @@ KNX_State { #PBP
 	
 #PBP	return undef if (not (defined($value)));
 #	return undef if (not (defined($reading)));
-	return if (not (defined($value)));
-	return if (not (defined($reading)));
+	return if (not (defined($value))); #PBP
+	return if (not (defined($reading))); #PBP
 	
 	#remove whitespaces
 	$value =~ s/^\s+|\s+$//gix;
@@ -1093,7 +1079,6 @@ KNX_State { #PBP
 #Get the chance to qualify attributes
 #############################
 sub
-#KNX_Attr(@) {
 KNX_Attr { #PBP
 	my ($cmd,$name,$aName,$aVal) = @_;
 	
@@ -1115,8 +1100,6 @@ KNX_Attr { #PBP
 
 #Split reading for DBLOG
 #############################
-#sub KNX_DbLog_split($) {
-#	my ($event) = @_;
 sub KNX_DbLog_split { #PBP
 	my $event = shift;
 	my ($reading, $value, $unit);
@@ -1192,8 +1175,6 @@ sub KNX_DbLog_split { #PBP
 #Handle incoming messages
 #############################
 sub
-#KNX_Parse($$) {
-#	my ($hash, $msg) = @_;
 KNX_Parse { #PBP
 	my $hash = shift;
 	my $msg = shift;
@@ -1208,8 +1189,8 @@ KNX_Parse { #PBP
 	#old syntax
 	#$msg =~ m/^$id(.{4})(.{1})(.{4})(.*)$/;
 	#new syntax for extended adressing
-	$msg =~ m/^$id(.{5})(.{1})(.{5})(.*)$/x;
-#PBP	my $src = $1;
+#PBP	$msg =~ m/^$id(.{5})(.{1})(.{5})(.*)$/x;
+#	my $src = $1;
 #	my $cmd = $2;
 #	my $dest = $3;
 #	my $val = $4;
@@ -1387,9 +1368,6 @@ KNX_Parse { #PBP
 #Function is called at every notify
 #############################
 sub 
-#KNX_Notify($$)
-#{
-#	my ($ownHash, $callHash) = @_;
 KNX_Notify { #PBP
 	my $ownHash = shift;
 	my $callHash = shift;
@@ -1405,8 +1383,6 @@ KNX_Notify { #PBP
 #Private function to convert GAD from hex to readable version
 #############################
 sub
-#KNX_hexToName ($)
-#{
 KNX_hexToName { #PBP
 	my $v = shift;
 	
@@ -1428,8 +1404,6 @@ KNX_hexToName { #PBP
 #Private function to convert GAD from hex to readable version
 #############################
 sub
-#KNX_hexToName2 ($)
-#{
 KNX_hexToName2 { #PBP
 	my $v = shift;
 	
@@ -1446,8 +1420,6 @@ KNX_hexToName2 { #PBP
 #Private function to convert GAD from readable version to hex
 #############################
 sub
-#KNX_nameToHex ($)
-#{
 KNX_nameToHex { #PBP
 	my $v = shift;
 	my $r = $v;
@@ -1470,8 +1442,6 @@ KNX_nameToHex { #PBP
 #Private function to clean input string according DPT
 #############################
 sub
-#KNX_checkAndClean ($$$)
-#{
 KNX_checkAndClean { # PBP
 	my ($hash, $value, $gadName) = @_;
 	my $name = $hash->{NAME};
@@ -1508,7 +1478,7 @@ KNX_checkAndClean { # PBP
 		}
 	}
 	
-#	return undef if ($found == 0);
+#PBP	return undef if ($found == 0);
 	my $undefined = undef;
 	return $undefined if ($found == 0); # PBP
 
@@ -1534,7 +1504,6 @@ KNX_checkAndClean { # PBP
 #Private function to replace state-values
 #############################
 sub
-#KNX_replaceByRegex ($$$) {
 KNX_replaceByRegex { #PBP
 	my ($regAttr, $prefix, $input) = @_;
 	my $retVal = $input;
@@ -1581,7 +1550,6 @@ KNX_replaceByRegex { #PBP
 #Private function to limit numeric values. Valid directions: encode, decode
 #############################
 sub
-#KNX_limit ($$$$) {
 KNX_limit { #PBP
 	my ($hash, $value, $gadName, $direction) = @_;
 	my $name = $hash->{NAME};
@@ -1643,7 +1611,6 @@ KNX_limit { #PBP
 #Private function to encode KNX-Message according DPT
 #############################
 sub
-#KNX_eval ($$$$) {
 KNX_eval { #PBP
 	my ($hash, $gadName, $state, $evalString) = @_;
 	my $name = $hash->{NAME};
@@ -1665,7 +1632,6 @@ KNX_eval { #PBP
 #Private function to encode KNX-Message according DPT
 #############################
 sub
-#KNX_encodeByDpt ($$$) {
 KNX_encodeByDpt { #PBP
 	my ($hash, $value, $gadName) = @_;
 	my $name = $hash->{NAME};
@@ -1953,7 +1919,6 @@ KNX_encodeByDpt { #PBP
 #Private function to decode KNX-Message according DPT
 #############################
 sub
-#KNX_decodeByDpt ($$$) {
 KNX_decodeByDpt { #PBP
 	my ($hash, $value, $gadName) = @_;
 	my $name = $hash->{NAME};
@@ -2228,6 +2193,7 @@ KNX_decodeByDpt { #PBP
 </style>
 <p><a name="KNX"></a></p>
 <h3>KNX</h3>
+<ul>
 <p>KNX is a standard for building automation / home automation. It is mainly based on a twisted pair wiring, but also other mediums (ip, wireless) are specified.</p>
 <p>For getting started, please refer to this document: <a href="https://www2.knx.org/media/docs/downloads/Marketing/Flyers/KNX-Basics/KNX-Basics_en.pdf">KNX-Basics</a></p>
 <p>While the module <a href="#TUL">TUL</a> represents the connection to the KNX network, the KNX modules represent individual KNX devices. <br /> 
@@ -2242,7 +2208,7 @@ The reading &lt;state&gt; will be updated with the last sent or received value.&
 <p><strong>Define</strong></p>
 <p><code>d</code><code>efine &lt;name&gt; KNX &lt;group&gt;:&lt;DPT&gt;:[gadName]:[set|get|listenonly]:[nosuffix] [&lt;group&gt;:&lt;DPT&gt; ..] [IODev]</code></p>
 <p><strong>Important:&nbsp;a KNX device needs at least one&nbsp;concrete DPT. Please refer to <a href="#KNXdpt">available DPT</a>. Otherwise the system cannot en- or decode the messages.</strong><br />
-<strong>Devices defined by autocreate have to be reworked with the suitable dpt. Otherwise they won't be able to work productively.</strong></p>
+<strong>Devices defined by autocreate have to be reworked with the suitable dpt. Otherwise they won't be able to work productively.</strong><br />
 <strong>Unless older versions the on-off command and the clickable bulb are not shown in the webfrontend out-of-the box. You have to add webCmd and devStateIcon. See examples...</strong></p>
 <p>Examples:</p>
 <pre style="padding-left: 30px;">define lamp1 KNX 0/10/11:dpt1:listenonly</pre>
@@ -2251,7 +2217,8 @@ The reading &lt;state&gt; will be updated with the last sent or received value.&
 <br>
 <pre style="padding-left: 30px;">define lamp2 KNX 0/10/12:dpt1:steuern 0/10/13:dpt1.001:status</pre>
 <pre style="padding-left: 30px;">define lamp3 KNX 0A0D:dpt1.003 myTul</pre>
-<p>The &lt;group&gt; parameters are either a group name notation (0-15/0-15/0-255) or the hex representation of the value (0-f0-f0-ff). All of the defined groups can be used for bus-communication. It is not allowed to have the same group more then once in one device. You can have several devices containing the same adresses.<br /> 
+<p>The &lt;group&gt; parameters are either a group name notation (0-15/0-15/0-255) or the hex representation of the value (0-f0-f0-ff). All of the defined groups can be used for bus-communication. 
+ It is not allowed to have the same group more then once in one device. You can have several devices containing the same adresses.<br /> 
 As described above the parameter &lt;DPT&gt; must contain the corresponding DPT.<br /> 
 The optional parameteter [gadName] may contain an alias for the GAD.&nbsp;The name must not cotain one of the following strings: on, off, on-for-timer, on-until, off-for-timer, off-until, toggle, raw, rgb, string, value, set, get, listenonly.<br />
 Especially if answerReading is set to 1, it might be useful to modifiy the behaviour of single GADs. If you want to restrict the GAD, you can raise the flags "get", "set", or "listenonly". The usage should be self-explainable. It is not possible to combine the flags.<br /> 
@@ -2290,8 +2257,8 @@ The answer from the bus-device is not shown in the toolbox, but is treated like 
 
 <p>&nbsp;</p>
 <p><strong>Common attributes</strong></p>
-<p>
 <div class="wrap">
+<p>
 <a href="#DbLogInclude">DbLogInclude</a><br /> 
 <a href="#DbLogExclude">DbLogExclude</a><br /><a href="#IODev">IODev</a><br />
 <a href="#alias">alias</a><br /> <a href="#alias">attributesExclude</a><br /> 
@@ -2315,7 +2282,8 @@ The answer from the bus-device is not shown in the toolbox, but is treated like 
 <a href="#userattr">userattr</a><br /> <a href="#verbose">verbose</a><br /> 
 <a href="#webCmd">webCmd</a><br /> 
 <a href="#webCmdLabel">webCmdLabel</a><br /> 
-<a href="#widgetOverride">widgetOverride</a></p>
+<a href="#widgetOverride">widgetOverride</a>
+</p>
 </div>
 
 <p>&nbsp;</p>
@@ -2455,14 +2423,19 @@ The answer from the bus-device is not shown in the toolbox, but is treated like 
 <p>&nbsp;</p>
 <p><em>Time master:</em></p>
 <pre>define timedev KNX 0/0/7:dpt10:time 0/0/8:dpt11:date 0/0/9:dpt19</pre>
-<pre>attr timedev eventMap /time now:timeNow/</pre>
-<pre>attr timedev webCmd value timeNow</pre>
-<p>Sends actual time to the bus:</p>
-<pre>set timedev now</pre>
-<p>Sends actual date to the bus:</p>
-<pre>set timedev date now</pre>
-<p>Sends actual date and time to the bus (combinded):</p>
-<pre>set timedev g3 now</pre>
+<p>Send time to the bus:</p>
+<pre>set timedev [time] now   or   set timedev time 18:33:44</pre> 
+<p>Send date to the bus:</p>
+<pre>set timedev date now   or   set timedev date 01.11.2020</pre>
+<p>Send date <b>and</b> time to the bus (combined):</p>
+<pre>set timedev g3 now   or   set timedev g3 01.11.2020_18:33:44</pre>
+<p>&nbsp;</p>
+<p><em>Send text to the bus:</em></p>
+<pre>define textdev KNX 0/0/9:dpt16</pre>
+<p>send text to Bus (max 14 Char.):
+<pre>set textdev g1 AbCdEfGhIjkLmN</pre>
+<p>delete text on the KNX display:
+<pre>set textdev g1 &gt;CLR&lt;</pre> 
 <p>&nbsp;</p>
 <p><em>Slider:</em></p>
 <pre>define newTest KNX 15/2/2:dpt5</pre>
@@ -2473,16 +2446,16 @@ The answer from the bus-device is not shown in the toolbox, but is treated like 
 <pre>define newTest KNX 15/2/9:dpt5 15/2/3:dpt5 15/2/2:dpt1.001:power</pre>
 <pre>attr newTest IODev knxd</pre>
 <pre>attr newTest eventMap {\</pre>
-	<pre>  usr=>{\</pre>
-		<pre>    '^getG1 (\d+)'=>'g1 $1',\</pre>
-		<pre>    '^getG2 (\d+)'=>'g2 $1',\</pre>
-		<pre>    '^An'=>'power on',\</pre>
-		<pre>    '^Aus'=>'power off',\</pre>
+	<pre>  usr=&gt;{\</pre>
+		<pre>    '^getG1 (\d+)'=&gt;'g1 $1',\</pre>
+		<pre>    '^getG2 (\d+)'=&gt;'g2 $1',\</pre>
+		<pre>    '^An'=&gt;'power on',\</pre>
+		<pre>    '^Aus'=&gt;'power off',\</pre>
 	<pre>  },\</pre>
 	<pre>  fw=>{\</pre>
-		<pre>    '^getG1 (\d+)'=>'getG1',\</pre>
-		<pre>    '^getG2 (\d+)'=>'getG2',\</pre>
-		<pre>    '^power-get'=>'state',\</pre>
+		<pre>    '^getG1 (\d+)'=&gt;'getG1',\</pre>
+		<pre>    '^getG2 (\d+)'=&gt;'getG2',\</pre>
+		<pre>    '^power-get'=&gt;'state',\</pre>
 	<pre>  }\</pre>
 <pre>}</pre>
 <pre>attr newTest webCmd An:Aus::Label1:getG1::Label2:getG2</pre>
@@ -2500,13 +2473,13 @@ The answer from the bus-device is not shown in the toolbox, but is treated like 
     <pre>  #Frontend nach Device: Ersetze "An"/"Aus" durch "Steuern on/off".\\</pre>
     <pre>  #Alle numerischen Werte vom Slider landen in "dimmwert"\\</pre>
 	<pre>  usr=>{\\</pre>
-		<pre>    '^An'=>'steuern on',\\</pre>
-		<pre>    '^Aus'=>'steuern off',\\</pre>
+		<pre>    '^An'=&gt;'steuern on',\\</pre>
+		<pre>    '^Aus'=&gt;'steuern off',\\</pre>
 	<pre>  },\\</pre>
     <pre>  #Tuning f$uuml;r die Detailseite...Zeige An/Aus richtig an\\</pre>
 	<pre>  fw=>{\\</pre>
-		<pre>    '^An'=>'An',\\</pre>
-		<pre>    '^Aus'=>'Aus',\\</pre>
+		<pre>    '^An'=&gt;'An',\\</pre>
+		<pre>    '^Aus'=&gt;'Aus',\\</pre>
 	<pre>  }\\</pre>
   <pre>}\</pre>
   <pre>attr testDev11 stateRegex /steuern-[sg]et:/steuern-/ /status-get:/status-/</pre>
@@ -2521,7 +2494,7 @@ The answer from the bus-device is not shown in the toolbox, but is treated like 
   <pre>#nicht machen!!!\</pre>
   <pre>attr testDev11 webCmd An:Aus:dimmwert\</pre>
   <pre>attr testDev11 widgetOverride dimmwert:slider,0,5,100\</pre>
-  
+</ul>  
 =end html
 =device
 =item summary Communicates to KNX via module TUL
