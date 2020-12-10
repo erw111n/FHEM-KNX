@@ -10,4 +10,4 @@ to avoid overwriting 10_KNX.pm with the original file from fhem.de, pls. add:
 
 ```attr global exclude_from_update fhem.de.*:FHEM/10_KNX.pm```
 
-Details of the update process (e.g. how to remove that stuff again): [FHEM-Wiki](https://wiki.fhem.de/wiki/Update) ```
+Details of the update process (e.g. how to remove that stuff again): [FHEM-Wiki](https://wiki.fhem.de/wiki/Update)
