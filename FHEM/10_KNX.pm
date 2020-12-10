@@ -2165,6 +2165,7 @@ KNX_decodeByDpt { #PBP
 
 =pod
 =begin html
+
 <style>
   .wrap {
     list-style-type: none;
@@ -2494,7 +2495,8 @@ The answer from the bus-device is not shown in the toolbox, but is treated like 
   <pre>#nicht machen!!!\</pre>
   <pre>attr testDev11 webCmd An:Aus:dimmwert\</pre>
   <pre>attr testDev11 widgetOverride dimmwert:slider,0,5,100\</pre>
-</ul>  
+</ul>
+
 =end html
 =device
 =item summary Communicates to KNX via module TUL
