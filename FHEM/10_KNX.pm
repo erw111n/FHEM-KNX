@@ -50,6 +50,9 @@ use warnings;
 use Encode;
 use SetExtensions;
 
+### MH Evolution Version string
+my $Eversion = 'E03.01 17-12-2020';
+
 #set to 1 for debug
 my $debug = 0;
 
@@ -631,7 +634,7 @@ KNX_Define { #PBP
 			}
 		}
 	}
-	
+	$hash->{Eversion} = $Eversion; ###MH Evolution version	
 #PBP	return undef;
 	return;
 }
@@ -676,8 +679,9 @@ KNX_Undef { #PBP
 #############################
 sub
 KNX_Get {  #PBP
-	my $hash = shift;
-	my @a = shift;
+	my ($hash, @a) = @_;
+#	my $hash = shift;
+#	my @a = shift;
 	my $name = $hash->{NAME};
 	my $groupnr = 1;
 
