@@ -1,6 +1,11 @@
 ### Update History for 10_KNX.pm
 ################################
-
+2020-12-xx add Evolution-version string, add dpt2.000 (JoeALLb), 
+           correction to "unknow argument..."
+           new attr disable, simplify set-cmd logic, 
+		   removed 'use SetExtensions', rework DbLogsplit logic
+2020-12-10 add docu example for dpt16, fix docu indent.
+2020-12-07 fixed dpt16, start PBP changes
 2020-12-04 first published version
         rework etlicher dpt1.subtypen: 
           betrifft: dpt1.004-dpt1.007,dpt1.011-dpt1.018,dpt1.020-dpt1.023
@@ -20,5 +25,3 @@
         dpt19 complete rework, bei set werden auch Wochentag, Sommerzeit 
           und die entsprechenden flags korrekt gesetzt.
         docu: dpt's & common attributes jetzt 2-spaltig
-2020-12-07 fixed dpt16, start PBP changes
-2020-12-10 add docu example for dpt16, fix docu indent.

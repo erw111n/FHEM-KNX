@@ -41,6 +41,8 @@
 # MH  20201202 dpt10 compatibility with widgetoverride :time, docu formatting
 # MH  20201207 improve code (PerlBestPractices) changes marked with #PBP, added x-flag to most of regex, fixed dpt16 
 # MH  20201210 add docu example for dpt16, fix docu indent.
+# MH  202012xx add Evolution-version string, add dpt2.000 (JoeALLb), correction to "unknow argument..."  
+#              new attr disable, simplify set-cmd logic, removed 'use SetExtensions', rework DbLogsplit logic    
 
 
 package main;
@@ -48,10 +50,10 @@ package main;
 use strict;
 use warnings;
 use Encode;
-use SetExtensions;
+#use SetExtensions;
 
 ### MH Evolution Version string
-my $Eversion = 'E03.01 17-12-2020';
+my $Eversion = 'E04.00 dd-mm-2020';
 
 #set to 1 for debug
 my $debug = 0;
@@ -114,6 +116,8 @@ my $PAT_DATE = qr/(3[01]|[0-2]?[0-9])\.(1[0-2]|0?[0-9])\.((19|20)[0-9][0-9])/ix;
 my $PAT_TIME = qr/(2[0-4]|[0?1][0-9]):(60|[0?1-5]?[0-9]):(60|[0?1-5]?[0-9])/ix; #PBP
 my $PAT_DPT16_CLR = qr/>CLR</ix; #MH
 
+my $UNDEF = undef; #PBP avoid Level5 warnings
+
 #CODE is the identifier for the en- and decode algos. See encode and decode functions
 #UNIT is appended to state for a better reading
 #FACTOR and OFFSET are used to normalize a value. value = FACTOR * (RAW - OFFSET). Must be undef for non-numeric values.
@@ -150,7 +154,8 @@ my %dpttypes = (
 
 	#Step value (two-bit)
 	"dpt2"          => {CODE=>"dpt2", UNIT=>"", FACTOR=>undef, OFFSET=>undef, PATTERN=>qr/((on)|(off)|(forceon)|(forceoff))$/ix, MIN=>undef, MAX=>undef, SETLIST=>"on,off,forceon,forceoff"},
-	  
+	"dpt2.000"      => {CODE=>"dpt2", UNIT=>"", FACTOR=>1, OFFSET=>0, PATTERN=>qr/(0?[0-3])$/ix, MIN=>0, MAX=>3},
+
 	#Step value (four-bit)
 	"dpt3"          => {CODE=>"dpt3", UNIT=>"", FACTOR=>1, OFFSET=>0, PATTERN=>qr/[+-]?\d{1,3}/ix, MIN=>-100, MAX=>100},
 	"dpt3.007"      => {CODE=>"dpt3", UNIT=>"%", FACTOR=>1, OFFSET=>0, PATTERN=>qr/[+-]?\d{1,3}/ix, MIN=>-100, MAX=>100},
@@ -266,6 +271,7 @@ KNX_Initialize {  #PBP
 	$hash->{DbLog_splitFn}  = "KNX_DbLog_split";
 	$hash->{AttrList}       = "IODev " . #tells the module the IO-Device to communicate with. Optionally set within definition.
             "do_not_notify:1,0 " .           #supress any notification (including log)
+            "disable:1,0 " .                 #device disabled 
             "showtime:1,0 " .                #shows time instead of received value in state
             "answerReading:1,0 " .           #allows FHEM to answer a read telegram
             "stateRegex:textField-long " .   #modifies state value
@@ -634,7 +640,8 @@ KNX_Define { #PBP
 			}
 		}
 	}
-	$hash->{Eversion} = $Eversion; ###MH Evolution version	
+	
+	$hash->{Eversion} = $Eversion; ###MH Evolution version
 #PBP	return undef;
 	return;
 }
@@ -671,7 +678,7 @@ KNX_Undef { #PBP
 
 	Log3 ($name, 5, "exit undef");
 #PBP	return undef;
-	return;
+	return $UNDEF; #PBP
 }
 
 #Places a "read" Message on the KNX-Bus
@@ -680,26 +687,23 @@ KNX_Undef { #PBP
 sub
 KNX_Get {  #PBP
 	my ($hash, @a) = @_;
-#	my $hash = shift;
-#	my @a = shift;
 	my $name = $hash->{NAME};
-	my $groupnr = 1;
 
-	my $tempStr = join (", ", @a);
-	Log3 ($name, 5, "enter get $name: hash: $hash, attributes: $tempStr");
-	
-	#not necessary any more - was used to get rid of the "-" from the checkboxes
-	#splice(@a, 1, 1) if (defined ($a[1]) and ($a[1] =~ m/-/));
+	#FHEM asks with a ? at startup - no action, no log
+	return "unknown argument $a[1] choose one of " . $hash->{GETSTRING} if(defined($a[1]) and ($a[1] =~ m/\?/x));
+	return "KNX_Get device: $name is disabled" if (IsDisabled($name));
+
+#	my $groupnr = 1;
+#
+#	my $tempStr = join (", ", @a);
+#	Log3 ($name, 5, "enter get $name: hash: $hash, attributes: $tempStr");
+	Log3 ($name, 5, "KNX_Get -enter: $name, " . join(", ", @a));
+
 	my $na = int(@a);
 
-	
 	#not more then 2 arguments allowed
-	Log3 ($name, 2, "get: too much arguments. Only one argument allowed (group-address). Other Arguments are discarded.") if ($na > 2);
-	
-	#FHEM asks with a ? at startup - no action, no log
-	
-	return "Unknown argument, choose one of " . $hash->{GETSTRING} if(defined($a[1]) and ($a[1] =~ m/\?/x));
-	
+	Log3 ($name, 2, "KNX_Get: too much arguments. Only one argument allowed (group-address). Other Arguments are discarded.") if ($na > 2);
+
 	#determine gadName to read
 	#ask for first defined GAD if no argument is supplied
 	my $gadName;
@@ -711,31 +715,31 @@ KNX_Get {  #PBP
 	{
 		$gadName = $hash->{FIRSTGADNAME}; 
 	}
-	
+
 	#get groupCode
 	my $groupc = $hash->{GADDETAILS}{$gadName}{CODE};
 	#get groupAddress
 	my $group = $hash->{GADDETAILS}{$gadName}{GROUP};
 	#get option		
 	my $option = $hash->{GADDETAILS}{$gadName}{OPTION};
-	
+
 	#return, if unknown group
-	return "no valid address stored for gad: $gadName" if(!$groupc);
-	
+	return "KNX_Get: no valid address stored for gad: $gadName" if(!$groupc);
+
 	#exit, if read is prohibited
 	#return "did not request a value - \"listenonly\" is set." if (AttrVal ($name, "listenonly", 0) =~ m/1/);
-	
+
 	#exit if get is prohibited
-	return "did not request a value - \"listenonly\" is set." if (defined ($option) and ($option =~ m/listenonly/i));
-	return "did not request a value - \"set\" is set." if (defined ($option) and ($option =~ m/set/i));
-  	
+	return "KNX_Get: did not request a value - \"listenonly\" is set." if (defined ($option) and ($option =~ m/listenonly/i));
+	return "KNX_Get: did not request a value - \"set\" is set." if (defined ($option) and ($option =~ m/set/i));
+
 	#send read-request to the bus
 	Log3 ($name, 5, "get $name: request value for GAD: $group, GAD-NAME: $gadName");
 	IOWrite($hash, $id, "r" . $groupc);
-	
-  	Log3 ($name, 5, "exit get");
-	
-	return "current value for $name ($group) requested";
+
+	Log3 ($name, 5, "KNX_Get: -exit");
+
+	return "KNX_Get: current value for $name ($group) requested";
 }
 
 #Does something according the given cmd...
@@ -745,143 +749,79 @@ KNX_Set { #PBP
 	my ($hash, @a) = @_;
 	my $name = $hash->{NAME};
 	my $ret = "";
-	my $na = int(@a);
-	
-	my $tempStr = join (", ", @a);
-	#log only, if not called with cmd = ?
-	Log3 ($name, 5, "enter set $name: hash: $hash, attributes: $tempStr") if ((defined ($a[1])) and (not ($a[1] eq "?")));
+	my $na = scalar(@a);
 
+	#FHEM asks with a "?" at startup or any reload of the device-detail-view
+	#return string for enabling webfrontend to show boxes, ...
+	return "unknown argument $a[1] choose one of " . $hash->{SETSTRING} if((defined($a[1])) && ($a[1] =~ m/\?/x));
+	return "KNX_Set device: $name is disabled" if (IsDisabled($name)); 
+
+#	my $tempStr = join (", ", @a);
+	#log only, if not called with cmd = ?
+#	Log3 ($name, 5, "enter set $name: hash: $hash, attributes: $tempStr") if ((defined ($a[1])) and (not ($a[1] eq "?")));
+	Log3 ($name, 5, "KNX_Set -enter: $name, " . join(", ", @a)) if ((defined ($a[1])) and (not ($a[1] eq "?")));
+
+	#return, if no cmd specified
+	return "KNX_Set: no gadname specified for set cmd" if((!defined($a[1])) || ($a[1] eq ''));
 	#return, if no set value specified
-	return "no set value specified" if($na < 2);
-	
+	return "KNX_Set: no value specified for set cmd" if($na < 2);
+
 	#backup values
 	my $arg1 = $a[1];
 	my $arg2 = undef; #PBP
 	$arg2 = $a[2] if defined ($a[2]); #PBP
 	#remove whitespaces
 	$arg1 =~ s/^\s+|\s+$//gix;
-	
-	#FHEM asks with a "?" at startup or any reload of the device-detail-view
-	#return string for enabling webfrontend to show boxes, ...
-	#Log3 ($name, 5, "Unknown argument, choose one of " . $hash->{SETSTRING}) if(defined($arg1) and ($arg1 =~ m/\?/));
-	return "Unknown argument, choose one of " . $hash->{SETSTRING} if(defined($arg1) and ($arg1 =~ m/\?/x));
-	
+
+#	#FHEM asks with a "?" at startup or any reload of the device-detail-view
+#	#return string for enabling webfrontend to show boxes, ...
+#	#Log3 ($name, 5, "Unknown argument, choose one of " . $hash->{SETSTRING}) if(defined($arg1) and ($arg1 =~ m/\?/));
+#	return "Unknown argument, choose one of " . $hash->{SETSTRING} if(defined($arg1) and ($arg1 =~ m/\?/x));
+#	return "unknown argument $a[1] choose one of " . $hash->{SETSTRING} if($a[1] =~ m/\?/x);
+
 	#contains gadNames to be executed
 	my $targetGadName = undef;
 	my $cmd = undef;
 	my @arg = ();
 	
+	#backup args
+#	for (my $i = 2; $i <= scalar(@a); $i++) {
+	for (my $i = 2; $i <= $na; $i++) {
+		push (@arg, $a[$i]) if (defined ($a[$i]));
+	}
+
 	#check, if old or new syntax
-	#new syntax, if first arg is a valid gadName
-	if (defined ($hash->{GADDETAILS}{$arg1}))
-	{
+#	for (my $i = 2; $i <= scalar(@a); $i++) {
+#		push (@arg, $a[$i]) if (defined ($a[$i]));
+#	}
+	if (defined ($hash->{GADDETAILS}{$arg1})) { # #new syntax, if first arg is a valid gadName
 		$targetGadName = $arg1;
-		$cmd = $arg2;
+#		$cmd = $arg2;
 
+		#shift backup args as with newsyntax $a[2] is cmd
+		$cmd = shift(@arg);
+#		for (my $i = 3; $i <= scalar(@a); $i++) 
+#		{
+#			push (@arg, $a[$i]) if (defined ($a[$i]));
+#		}
+	} else { #oldsyntax
 		#backup args
-		for (my $i = 3; $i <= scalar(@a); $i++) 
-		{
-			push (@arg, $a[$i]) if (defined ($a[$i]));
-		}
-	}
-	#oldsyntax
-	else
-	{
-		#the command can be send to any of the defined groups indexed starting by 1
-		#optional last argument starting with g indicates the group
-		#default
-		my $groupnr = 1;
-		my $lastArg = $na - 1;
-		#select another group, if the last arg starts with a g
-		if($na > 2 && $a[$lastArg]=~ m/${PAT_GNO}/ix)
-		{
-			$groupnr = $a[$lastArg];
-			#remove "g"
-			$groupnr =~ s/^g//gix;
+#		for (my $i = 2; $i <= scalar(@a); $i++) {
+#			push (@arg, $a[$i]) if (defined ($a[$i]));
+#		}
 
-			$lastArg--;
-		}
-
-		#unknown groupnr
-		return "group-no. not found" if(!defined($groupnr));
-		
-		foreach my $key (keys %{$hash->{GADDETAILS}})
-		{
-			$targetGadName = $key if (int ($hash->{GADDETAILS}{$key}{NO}) == int ($groupnr));
-		}
-		
-		$cmd = $arg1;
-		
-		#backup args
-		for (my $i = 2; $i <= $lastArg; $i++) 
-		{
-			push (@arg, $a[$i]) if (defined ($a[$i]));
-		}
-		
-		if ($cmd =~ m/$RAW/ix)
-		{
-			return "no data for cmd $cmd" if ($lastArg < 2);
-
-			#check for 1-16 hex-digits
-			return "$a[2] has wrong syntax. Use hex-format only." if ($a[2] !~ m/[0-9A-F]{1,16}/ix); # PBP
-##			if ($a[2] =~ m/[0-9A-F]{1,16}/ix)
-##			{
-				$cmd = $a[2];
-##			} 
-##			else
-##			{
-##				return "$a[2] has wrong syntax. Use hex-format only.";
-##			}
-		}
-		elsif ($cmd =~ m/$VALUE/ix)
-		{
-			my $code = $hash->{GADDETAILS}{$targetGadName}{MODEL};
-			return "\"value\" not allowed for dpt1, dpt16 and dpt232" if ($code =~ m/(dpt1$)|(dpt16$)|(dpt232$)/ix);
-			return "no data for cmd $cmd" if ($lastArg < 2);
-			
-			$cmd = $a[2];
-			$cmd =~ s/,/\./gx;
-		} 
-		#set string <val1 val2 valn>
-		elsif ($cmd =~ m/$STRING/ix)
-		{
-			my $code = $hash->{GADDETAILS}{$targetGadName}{MODEL};
-			return "\"string\" only allowed for dpt16" if (not($code =~ m/dpt16/ix));
-			return "no data for cmd $cmd" if ($lastArg < 2);
-			
-			$cmd = $a[2];
-			for (my $i=3; $i<=$lastArg; $i++)
-			{
-				$cmd.= " ".$a[$i];
-			}
-		}
-		#set RGB <RRGGBB>
-		elsif ($cmd =~ m/$RGB/ix)
-		{
-			my $code = $hash->{GADDETAILS}{$targetGadName}{MODEL};
-			return "\"RGB\" only allowed for dpt232" if (not($code =~ m/(dpt232$)/ix));
-			return "no data for cmd $cmd" if ($lastArg < 2);
-
-			#check for 1-16 hex-digits
-			return "$a[2] has wrong syntax. Use hex-format only." if ($a[2] !~ m/[0-9A-F]{6}/ix); #PBP
-##			if ($a[2] =~ m/[0-9A-F]{6}/ix)
-##			{
-				$cmd = lc($a[2]);
-##			} 
-##			else
-##			{
-##				return "$a[2] has wrong syntax. Use hex-format only.";
-##			}
-		}
+		(my $err, $targetGadName, $cmd) = KNX_Set_oldsyntax($hash,@a); ## process old syntax
+		return $err if defined($err);
 	}
 
-	return "no target and cmd found" if((!defined($targetGadName)) && (!defined($cmd))); #PBP
-	return "no cmd found" if(!defined($cmd));
-	return "no target found" if(!defined($targetGadName));
+############################
+	return "KNX_Set: no target and cmd found" if((!defined($targetGadName)) && (!defined($cmd))); #PBP
+	return "KNX_Set: no cmd found" if(!defined($cmd));
+	return "KNX_Set: no target found" if(!defined($targetGadName));
 
-	$tempStr = join (" ", @arg);
-	Log3 ($name, 5, "set $name: desired target is gad $targetGadName, command: $cmd, args: $tempStr");
-	
+	my $tempStr = join (" ", @arg);
+	Log3 ($name, 5, "KNX_Set: set $name: desired target is gad $targetGadName, command: $cmd, args: $tempStr");
+
 	#get details
 	my $groupCode = $hash->{GADDETAILS}{$targetGadName}{CODE};
 	my $option = $hash->{GADDETAILS}{$targetGadName}{OPTION};
@@ -889,8 +829,8 @@ KNX_Set { #PBP
 	#This contains the input 
 	my $value = "";
 	
-	return "did not set a value - \"listenonly\" is set." if (defined ($option) and ($option =~ m/listenonly/ix));
-	return "did not set a value - \"get\" is set." if (defined ($option) and ($option =~ m/get/ix));
+	return "KNX_Set: did not set a value - \"listenonly\" is set." if (defined ($option) and ($option =~ m/listenonly/ix));
+	return "KNX_Set: did not set a value - \"get\" is set." if (defined ($option) and ($option =~ m/get/ix));
 	
 	##############################
 	#process set command with $value as output
@@ -901,101 +841,16 @@ KNX_Set { #PBP
 	#Special commands for dpt1 and dpt1.001
 	if ($hash->{GADDETAILS}{$targetGadName}{MODEL} =~ m/((dpt1)|(dpt1.001))$/ix)
 	{
-		#delete any running timers
-		#on-for-timer
-		if ($hash->{"ON-FOR-TIMER_$groupCode"})
-		{
-			CommandDelete(undef, $name . "_timer_$groupCode");
-			delete $hash->{"ON-FOR-TIMER_$groupCode"};
-		}
-		#on-until
-		if($hash->{"ON-UNTIL_$groupCode"}) 
-		{
-			CommandDelete(undef, $name . "_until_$groupCode");
-			delete $hash->{"ON-UNTIL_$groupCode"};
-		}
-		#off-for-timer
-		if ($hash->{"OFF-FOR-TIMER_$groupCode"})
-		{
-			CommandDelete(undef, $name . "_timer_$groupCode");
-			delete $hash->{"OFF-FOR-TIMER_$groupCode"};
-		}
-		#off-until
-		if($hash->{"OFF-UNTIL_$groupCode"}) 
-		{
-			CommandDelete(undef, $name . "_until_$groupCode");
-			delete $hash->{"OFF-UNTIL_$groupCode"};
-		}
-		
-		#set on-for-timer / off-for-timer
-		if ($cmd =~ m/($ONFORTIMER)|($OFFFORTIMER)/ix)
-		{
-			#get duration
-			my $duration = sprintf("%02d:%02d:%02d", $arg[0]/3600, ($arg[0]%3600)/60, $arg[0]%60);
-			Log3 ($name, 5, "set $name: \"on-for-timer\" for $duration");
-			#create local marker
-			$hash->{"ON-FOR-TIMER_$groupCode"} = $duration;
-			#place at-command for switching off
-			CommandDefine(undef, $name . "_timer_$groupCode at +$duration set $name $targetGadName off");
-			#switch on or off...
-			if ($cmd =~ m/on/i)
-			{
-				$value = "on";
-			}
-			else
-			{
-				$value = "off";
-			}
-		} 
-		#set on-until / off-until
-		elsif ($cmd =~ m/($ONUNTIL)|($OFFUNTIL)/ix)
-		{
-			#get off-time
-			my ($err, $hr, $min, $sec, $fn) = GetTimeSpec($arg[0]);
-			
-			return "Error trying to parse timespec for $arg[0]: $err" if (defined($err));
-			
-			#build of-time
-			my @lt = localtime;
-			my $hms_til = sprintf("%02d:%02d:%02d", $hr, $min, $sec);
-			my $hms_now = sprintf("%02d:%02d:%02d", $lt[2], $lt[1], $lt[0]);
-			
-			return "Won't switch - now ($hms_now) is later than $hms_til" if($hms_now ge $hms_til);
-
-			Log3 ($name, 5, "set $name: \"on-until\" up to $hms_til");
-			#create local marker
-			$hash->{"ON-UNTIL_$groupCode"} = $hms_til;
-			#place at-command for switching off
-			CommandDefine(undef, $name . "_until_$groupCode at $hms_til set $name $targetGadName off");
-			#switch on or off...
-			if ($cmd =~ m/on/ix)
-			{
-				$value = "on";
-			}
-			else
-			{
-				$value = "off";
-			}
-		} 
-		#toggle
-		elsif ($cmd =~ m/$TOGGLE/ix)
-		{
-			if (ReadingsVal($name, $hash->{GADDETAILS}{$targetGadName}{RDNAMEGET}, 'on') =~ m/off/ix)  # PBP
-			{
-				$value = "on";
-			}
-			else
-			{
-				$value = "off";
-			}
-		}
+		(my $err, $value) = KNX_Set_dpt1($hash, $targetGadName, $cmd, @arg);
+		return $err if defined($err);
 	}
-	
+
+##########################################################
 	#check and cast value
 	my $transval = KNX_checkAndClean($hash, $value, $targetGadName);
 
 	#if cast not successful
-	return "invalid value: $value" if (!defined($transval));
+	return "KNX_Set: invalid value: $value" if (!defined($transval));
 
 	#
 	#
@@ -1007,7 +862,7 @@ KNX_Set { #PBP
 	$transval = KNX_encodeByDpt($hash, $transval, $targetGadName);
 	IOWrite($hash, $id, "w" . $groupCode . $transval);
 	
-	Log3 ($name, 5, "set $name: cmd: $cmd, value: $value, translated: $transval");
+	Log3 ($name, 5, "KNX_Set: $name: cmd: $cmd, value: $value, translated: $transval");
 
 	#re-read value, do not modify variable name due to usage in cmdAttr
 	$transval = KNX_decodeByDpt($hash, $transval, $targetGadName);
@@ -1018,7 +873,7 @@ KNX_Set { #PBP
 	my $regAttr = AttrVal($name, "stateRegex", undef);
 	my $state = KNX_replaceByRegex ($regAttr, $rdString . ":", $transval);
 	
-	Log3 ($name, 5, "set name: $name - replaced $rdString:$transval to $state") if (not ($transval eq $state));
+	Log3 ($name, 5, "KNX_Set: $name - replaced $rdString:$transval to $state") if (not ($transval eq $state));
 
 	if (defined($state))
 	{
@@ -1031,7 +886,7 @@ KNX_Set { #PBP
 		if ((defined($cmdAttr)) && (!($cmdAttr eq "")))  #PBP
 		{
 			$state = KNX_eval ($hash, $targetGadName, $state, $cmdAttr);
-			Log3 ($name, 5, "set name: $name - state replaced via command, result: state:$state");
+			Log3 ($name, 5, "KNX_Set: $name - state replaced via command, result: state:$state");
 		}
 		
 		readingsBulkUpdate($hash, "state", $state);
@@ -1039,9 +894,168 @@ KNX_Set { #PBP
 		readingsEndUpdate($hash, 1);
 	}
 	
-	Log3 ($name, 5, "exit set");
+	Log3 ($name, 5, "KNX_Set: -exit");
 #PBP	return undef;
-	return;
+	return $UNDEF; #PBP
+}
+
+# Process set command for old syntax 
+# calling param: $hash, arg array (same as KNX_Set)
+# returns ($err, targetgadname, $cmd)
+sub KNX_Set_oldsyntax {
+	my ($hash, @a) = @_;
+	my $name = $hash->{NAME};
+	my $na = scalar(@a);
+
+	#contains gadNames to be executed
+	my $targetGadName = undef;
+	my $cmd = undef; #the command can be send to any of the defined groups indexed starting by 1
+##MH	my @arg = ();    #optional last argument starting with g indicates the group
+
+	#default
+	my $groupnr = 1;
+	my $lastArg = $na - 1;
+	#select another group, if the last arg starts with a g
+	if($na > 2 && $a[$lastArg]=~ m/${PAT_GNO}/ix) {
+		$groupnr = $a[$lastArg];
+		#remove "g"
+		$groupnr =~ s/^g//gix;
+		$lastArg--;
+	}
+
+	#unknown groupnr
+	return "KNX_Set: group-no. not found" if(!defined($groupnr));
+	
+	foreach my $key (keys %{$hash->{GADDETAILS}}) {
+		$targetGadName = $key if (int ($hash->{GADDETAILS}{$key}{NO}) == int ($groupnr));
+	}
+
+	$cmd = $a[1];
+	$cmd =~ s/^\s+|\s+$//gix;
+
+##MH	#backup args
+##	for (my $i = 2; $i <= $lastArg; $i++) {
+##		push (@arg, $a[$i]) if (defined ($a[$i]));
+##	}
+
+	# all of the following cmd's need at least 1 Argument (or more)
+#	return "KNX_Set: no arguments for cmd $cmd" if ($lastArg < 2);
+	return ($UNDEF, $targetGadName, $cmd) if ($lastArg < 2);
+
+	if ($cmd =~ m/$RAW/ix) {
+#		return "KNX_Set: no data for cmd $cmd" if ($lastArg < 2);
+
+		#check for 1-16 hex-digits
+		return "KNX_Set: $cmd $a[2] has wrong syntax. Use hex-format only." if ($a[2] !~ m/[0-9A-F]{1,16}/ix); # PBP
+		$cmd = $a[2];
+	}
+	elsif ($cmd =~ m/$VALUE/ix) {
+		my $code = $hash->{GADDETAILS}{$targetGadName}{MODEL};
+		return "KNX_Set: \"value\" not allowed for dpt1, dpt16 and dpt232" if ($code =~ m/(dpt1$)|(dpt16$)|(dpt232$)/ix);
+#		return "KNX_Set: no data for cmd $cmd" if ($lastArg < 2);
+		
+		$cmd = $a[2];
+		$cmd =~ s/,/\./gx;
+	} 
+	#set string <val1 val2 valn>
+	elsif ($cmd =~ m/$STRING/ix) {
+		my $code = $hash->{GADDETAILS}{$targetGadName}{MODEL};
+		return "KNX_Set: \"string\" only allowed for dpt16" if (not($code =~ m/dpt16/ix));
+#		return "KNX_Set: no data for cmd $cmd" if ($lastArg < 2);
+
+		$cmd = $a[2];
+		for (my $i=3; $i<=$lastArg; $i++) {
+			$cmd.= " ".$a[$i];
+		}
+	}
+	#set RGB <RRGGBB>
+	elsif ($cmd =~ m/$RGB/ix) {
+		my $code = $hash->{GADDETAILS}{$targetGadName}{MODEL};
+		return "KNX_Set: \"RGB\" only allowed for dpt232" if (not($code =~ m/(dpt232$)/ix));
+#		return "KNX_Set: no data for cmd $cmd" if ($lastArg < 2);
+
+		#check for 1-16 hex-digits
+		return "KNX_Set: $cmd $a[2] has wrong syntax. Use hex-format only." if ($a[2] !~ m/[0-9A-F]{6}/ix); #PBP
+		$cmd = lc($a[2]);
+	}
+
+	return ($UNDEF, $targetGadName, $cmd);
+}
+
+# process special dpt1, dpt1.001 set
+# calling: $hash, $targetGadName,  $cmd, @arg
+# return: $err, $value
+sub KNX_Set_dpt1 {
+	my ($hash, $targetGadName, $cmd, @arg) = @_;
+	my $name = $hash->{NAME};
+
+	my $value ='';
+	my $groupCode = $hash->{GADDETAILS}{$targetGadName}{CODE};
+
+	#delete any running timers
+	if ($hash->{"TIMER_$groupCode"}) { ##MH
+		CommandDelete(undef, $name . "_TIMER_$groupCode");
+		delete $hash->{"TIMER_$groupCode"};
+	}
+
+	# the defaults
+	if ($cmd =~ m/^(on|off)$/ix) {$value = $cmd;}
+	elsif ($cmd eq '0') {$value = 'off';}
+	elsif ($cmd eq '1') {$value = 'on';}
+
+	#set on-for-timer / off-for-timer
+	elsif ($cmd =~ m/($ONFORTIMER)|($OFFFORTIMER)/ix) {
+		#get duration
+		my $duration = sprintf("%02d:%02d:%02d", $arg[0]/3600, ($arg[0]%3600)/60, $arg[0]%60);
+		Log3 ($name, 5, "KNX_Set $name: \"on-for-timer\" for $duration");
+		#create local marker
+		$hash->{"TIMER_$groupCode"} = $duration;
+		#place at-command for switching off
+		#switch on or off...
+		if ($cmd =~ m/on/i) {
+			$value = "on";
+			CommandDefine(undef, $name . "_TIMER_$groupCode at +$duration set $name $targetGadName off"); ##MH
+		} else {
+			$value = "off";
+			CommandDefine(undef, $name . "_TIMER_$groupCode at +$duration set $name $targetGadName on"); ##MH
+		}
+	}
+	#set on-until / off-until
+	elsif ($cmd =~ m/($ONUNTIL)|($OFFUNTIL)/ix) {
+		#get off-time
+		my ($err, $hr, $min, $sec, $fn) = GetTimeSpec($arg[0]); ## fhem.pl
+		return "KNX_Set: Error trying to parse timespec for $arg[0]: $err" if (defined($err));
+
+		#build of-time
+		my @lt = localtime;
+		my $hms_til = sprintf("%02d:%02d:%02d", $hr, $min, $sec);
+		my $hms_now = sprintf("%02d:%02d:%02d", $lt[2], $lt[1], $lt[0]);
+
+		return "KNX_Set: Won't switch - now ($hms_now) is later than $hms_til" if($hms_now ge $hms_til);
+
+		Log3 ($name, 5, "KNX_Set $name: \"on-until\" up to $hms_til");
+		#create local marker
+		$hash->{"TIMER_$groupCode"} = $hms_til;
+		#place at-command for switching off
+		#switch on or off...
+		if ($cmd =~ m/on/ix) {
+			$value = "on";
+			CommandDefine(undef, $name . "_TIMER_$groupCode at $hms_til set $name $targetGadName off"); ##MH
+		} else {
+			$value = "off";
+			CommandDefine(undef, $name . "_TIMER_$groupCode at $hms_til set $name $targetGadName on"); ##MH
+		}
+	}
+	#toggle
+	elsif ($cmd =~ m/$TOGGLE/ix) {
+		if (ReadingsVal($name, $hash->{GADDETAILS}{$targetGadName}{RDNAMEGET}, 'on') =~ m/off/ix) {  # PBP
+			$value = "on";
+		} else {
+			$value = "off";
+		}
+	}
+
+	return ($UNDEF,$value);
 }
 
 #In case setstate is executed, a readingsupdate is initiated
@@ -1071,13 +1085,12 @@ KNX_State { #PBP
 	#workaround for STATE in capitol letters (caused by unknown external function)
 	$reading = "state" if ($reading =~ m/state/ix);
 	
-	Log3 ($name, 5, "state $name: update $reading with value: $value");
+	Log3 ($name, 5, "KNX_State $name: update $reading with value: $value");
 	
 	#write value and update reading
 	readingsSingleUpdate($hash, $reading, $value, 1);
 
-#PBP	return undef;
-	return;
+	return $UNDEF; #PBP
 }
 
 #Get the chance to qualify attributes
@@ -1085,21 +1098,23 @@ KNX_State { #PBP
 sub
 KNX_Attr { #PBP
 	my ($cmd,$name,$aName,$aVal) = @_;
-	
-	#if($cmd eq "set") 
-	#{		
-	#	if(($attr_name eq "debug") and (($attr_value eq "1") or ($attr_value eq "true")))
-	#	{
-	#	}			
-	#}
-	
-	Log3 ($name, 2, "Attribut \"listenonly\" is deprecated. Please supply in definition - see commandref for details.") if ($aName =~ m/listenonly/ix);
-	Log3 ($name, 2, "Attribut \"readonly\" is deprecated. Please supply \"get\" in definition - see commandref for details.") if ($aName =~ m/readonly/ix);
-	Log3 ($name, 2, "Attribut \"slider\" is deprecated. Please use widgetOverride in Combination with WebCmd instead. See commandref for details.") if ($aName =~ m/slider/ix);
-	Log3 ($name, 2, "Attribut \"useSetExtensions\" is deprecated.") if ($aName =~ m/useSetExtensions/ix);
+	my $hash = $defs{$name};
 
-#PBP	return undef;
-	return;
+	if ($cmd eq 'set') {
+		Log3 ($name, 2, "Attribut \"listenonly\" is deprecated. Please supply in definition - see commandref for details.") if ($aName =~ m/listenonly/ix);
+		Log3 ($name, 2, "Attribut \"readonly\" is deprecated. Please supply \"get\" in definition - see commandref for details.") if ($aName =~ m/readonly/ix);
+		Log3 ($name, 2, "Attribut \"slider\" is deprecated. Please use widgetOverride in Combination with WebCmd instead. See commandref for details.") if ($aName =~ m/slider/ix);
+		Log3 ($name, 2, "Attribut \"useSetExtensions\" is deprecated.") if ($aName =~ m/useSetExtensions/ix);
+	}
+	if ($aName eq 'disable') {
+		if ((defined($aVal)) && ($aVal =~ /1/x))  {
+			$hash->{"SETSTRING"} = ''; # remove set & get options from UI
+			$hash->{"GETSTRING"} = '';
+		} else {
+			CommandModify(undef, "$name $hash->{'DEF'}"); # do a defmod ....
+		}
+	}
+	return $UNDEF; #PBP
 }
 
 #Split reading for DBLOG
@@ -1110,8 +1125,33 @@ sub KNX_DbLog_split { #PBP
 
 #PBP	my $tempStr = join (", ", @_);
 #	Log (5, "splitFn - enter, attributes: $tempStr");
-	Log (5, "KNX_DbLog_split - enter, event: $event"); #PBP
+	Log (5, "KNX_DbLog_split -enter: event= $event"); #PBP
 	
+	#split input-string
+	my @strings = split (" ", $event);
+	return $UNDEF if (not defined ($strings[0])); #PBP
+
+	#detect reading - real reading or state?
+	if ($strings[0] =~ m/.*:$/x) { # real reading
+		$reading = shift(@strings);
+		$reading =~ s/:$//x;
+	} else {
+		$reading = 'state';
+	}
+	return $UNDEF if (not defined ($strings[0])); #PBP
+
+	#per default join all single pieces
+	$value = join(" ", @strings);
+
+	#numeric value? and last value non numeric? - assume unit
+	if (($strings[0] =~ /^[+-]?\d*[.,]?\d+$/x) && ($strings[scalar(@strings)-1] !~ m/^[+-]?\d*[.,]?\d+$/x)) {
+		$value = join(" ",@strings[0 .. (scalar(@strings)-2)]);
+		$unit = $strings[scalar(@strings)-1];
+	}
+	$unit = '' if (!defined($unit));
+
+=begin delete3
+################################
 	#detect reading - real reading or state?
 	my $isReading = "false"; 
 	$isReading = "true" if ($event =~ m/: /x);
@@ -1122,9 +1162,9 @@ sub KNX_DbLog_split { #PBP
 	my $startIndex = undef;
 	$unit = "";
 
-	my $undefined = undef; #PBP
+#	my $undefined = undef; #PBP
 #	return undef if (not defined ($strings[0]));
-	return $undefined if (not defined ($strings[0])); #PBP
+	return $UNDEF if (not defined ($strings[0])); #PBP
 
 	#real reading?
 	if ($isReading =~ m/true/ix)
@@ -1143,7 +1183,7 @@ sub KNX_DbLog_split { #PBP
 	}
 	
 #	return undef if (not defined ($strings[$startIndex]));
-	return $undefined if (not defined ($strings[$startIndex])); #PBP
+	return $UNDEF if (not defined ($strings[$startIndex])); #PBP
 	#per default join all single pieces
 	$value = join(" ", @strings[$startIndex..(int(@strings) - 1)]);
 	
@@ -1170,9 +1210,10 @@ sub KNX_DbLog_split { #PBP
 	#{
 	#	$value = join(" ", @strings[$startIndex..(int(@strings) - 1)]);
 	#}
-		
-	Log (5, "KNX_DbLog_split - exit, READING: $reading, VALUE: $value, UNIT: $unit");
 	
+=end delete3
+=cut	
+	Log (5, "KNX_DbLog_split -exit: READING: $reading, VALUE: $value, UNIT: $unit");
 	return ($reading, $value, $unit);
 }
 
@@ -1184,26 +1225,21 @@ KNX_Parse { #PBP
 	my $msg = shift;
 	my $name = $hash->{NAME};
 	
+	return '' if (IsDisabled($name)); # device is disabled
+
 	#Msg format: 
-	#C(w/r/p)<group><value> i.e. Bw00000101
+	#C(w/r/p)<group><value> i.e. Cw00000101
 	#we will also take reply telegrams into account, 
 	#as they will be sent if the status is asked from bus 	
-	#split message into parts
 
-	#old syntax
-	#$msg =~ m/^$id(.{4})(.{1})(.{4})(.*)$/;
 	#new syntax for extended adressing
 #PBP	$msg =~ m/^$id(.{5})(.{1})(.{5})(.*)$/x;
-#	my $src = $1;
-#	my $cmd = $2;
-#	my $dest = $3;
-#	my $val = $4;
-	my ($src,$cmd,$dest,$val) = $msg =~ m/^$id(.{5})(.{1})(.{5})(.*)$/x; #PBP
+	my ($src,$cmd,$dest,$val) = $msg =~ m/^$id(.{5})(.{1})(.{5})(.*)$/ix; #PBP
 	my $gadCode = $dest;
 	
 	my @foundMsgs;
 	
-	Log3 ($name, 5, "enter parse: hash: $hash name: $name, dest: $dest, msg: $msg");
+	Log3 ($name, 5, "KNX_Parse -enter: hash: $hash name: $name, dest: $dest, msg: $msg");
 
 	#gad not defined yet, give feedback for autocreate
 	if (not (exists $modules{KNX}{defptr}{$gadCode}))
@@ -1221,16 +1257,6 @@ KNX_Parse { #PBP
 	my @deviceList = @{$modules{KNX}{defptr}{$gadCode}};
 	#process message for all affected devices and gad's
 
-	#debug GAD-codes
-	if (0)
-	{
-		Log3 ($name, 5, "GAD: $gadCode");
-		foreach my $dv (@{$modules{KNX}{defptr}{$gadCode}}) 
-		{
-			Log3 ($name, 5, "DEV: " . $dv->{NAME} . " (GAD: $gadCode)");
-		}
-	}
-
 	foreach my $deviceHash (@deviceList)
 	{
 		#get details
@@ -1242,8 +1268,11 @@ KNX_Parse { #PBP
 		my $putString = $deviceHash->{GADDETAILS}{$gadName}{RDNAMEPUT};
 		$rdString = $deviceHash->{GADDETAILS}{$gadName}{RDNAMESET} if (!defined($rdString) || $rdString eq ''); #in case of set option
 		
-		Log3 ($deviceName, 5, "parse: process message, device-name: $deviceName, rd-name: $gadName, gadCode: $gadCode, model: $model");
-		
+		Log3 ($deviceName, 5, "KNX_Parse -process: device-name: $deviceName, rd-name: $gadName, gadCode: $gadCode, model: $model");
+
+		#skip, if this is ignored
+		next if (IsIgnored($deviceName));
+
 		#########################
 		#process message
 		#
@@ -1256,11 +1285,11 @@ KNX_Parse { #PBP
 			if (not defined($transval) or ($transval eq ""))
 			{
 				readingsSingleUpdate($deviceHash, "last-sender", KNX_hexToName2($src), 1);
-				Log3 ($deviceName, 2, "parse device hash (wpi): $deviceHash name: $deviceName, message could not be decoded - see log for details");
+				Log3 ($deviceName, 2, "KNX_Parse device hash (wp): $deviceHash name: $deviceName, message could not be decoded - see log for details");
 				next;
 			}
 
-			Log3 ($deviceName, 5, "received hash (wpi): $deviceHash name: $deviceName, STATE: $transval, READING: $gadName, SENDER: $src");
+			Log3 ($deviceName, 5, "KNX_Parse received hash (wp): $deviceHash name: $deviceName, STATE: $transval, READING: $gadName, SENDER: $src");
 
 			#append post-string, if supplied
 			my $suffix = AttrVal($deviceName, "format",undef);
@@ -1269,7 +1298,7 @@ KNX_Parse { #PBP
 			my $regAttr = AttrVal($deviceName, "stateRegex", undef);
 			my $state = KNX_replaceByRegex ($regAttr, $rdString . ":", $transval);
 			
-			Log3 ($deviceName, 5, "parse device hash (wpi): $deviceHash name: $deviceName - replaced $rdString:$transval to $state") if (not ($transval eq $state));
+			Log3 ($deviceName, 5, "KNX_Parse device hash (wp): $deviceHash name: $deviceName - replaced $rdString:$transval to $state") if (not ($transval eq $state));
 
 			if (defined($state))
 			{
@@ -1287,7 +1316,7 @@ KNX_Parse { #PBP
 				{
 
 					$state = KNX_eval ($deviceHash, $gadName, $state, $cmdAttr);
-					Log3 ($deviceName, 5, "parse device hash (wpi): $deviceHash name: $deviceName - state replaced via command $cmdAttr - state: $state");
+					Log3 ($deviceName, 5, "KNX_Parse device hash (wp): $deviceHash name: $deviceName - state replaced via command $cmdAttr - state: $state");
 				}
 				#reassign original name...
 				$name = $hash->{NAME};
@@ -1305,7 +1334,7 @@ KNX_Parse { #PBP
 #				next;
 #			}
 
-			Log3 ($deviceName, 5, "received hash (r): $deviceHash name: $deviceName, GET");
+			Log3 ($deviceName, 5, "KNX_Parse received hash (r): $deviceHash name: $deviceName, GET");
 			my $transval = undef;
 
 			#answer "old school"
@@ -1314,15 +1343,14 @@ KNX_Parse { #PBP
 			{
 				my $putVal = ReadingsVal($deviceName, "putString", undef);
 				
-				if ((defined($putVal)) && (!($putVal eq "")))  #PBP
+				if ((defined($putVal)) && ($putVal ne ""))  #PBP
 				{
-					#medium priority, overwrite $value
-					$value = $putVal;
+					$value = $putVal; #medium priority, overwrite $value
 				}
 				else
 				{
-					#lowest priority - use state
-					$value = ReadingsVal($deviceName, "state", undef) if (AttrVal($deviceName, "answerReading", 0) =~ m/1/x);
+#					$value = ReadingsVal($deviceName, "state", undef) if (AttrVal($deviceName, "answerReading", 0) =~ m/1/x);
+					$value = ReadingsVal($deviceName, "state", undef); #lowest priority - use state
 				}
 			}
 
@@ -1335,7 +1363,7 @@ KNX_Parse { #PBP
 				#try to fix: answer only, if eval was successful
 				if (defined($value) && ($value ne '') && ($value !~ m/ERROR/ix))
 				{
-					Log3 ($deviceName, 5, "parse device hash (r): $deviceHash name: $deviceName - put replaced via command $cmdAttr - value: $value");
+					Log3 ($deviceName, 5, "KNX_Parse device hash (r): $deviceHash name: $deviceName - put replaced via command $cmdAttr - value: $value");
 					readingsSingleUpdate($deviceHash, $putString, $value,1);
 				}
 				else
@@ -1349,13 +1377,13 @@ KNX_Parse { #PBP
 			if (defined($value))
 			{
 				$transval = KNX_encodeByDpt($deviceHash, $value, $gadName);
-				Log3 ($deviceName, 5, "received, send answer hash: $deviceHash name: $deviceName, GET: $transval, READING: $gadName");
+				Log3 ($deviceName, 5, "KNX_Parse send answer hash: $deviceHash name: $deviceName, GET: $transval, READING: $gadName");
 				IOWrite ($deviceHash, $id, "p" . $gadCode . $transval);
 			}
 		}
 								
-		#skip, if this is ignored
-		next if (IsIgnored($deviceName));
+#		#skip, if this is ignored
+#		next if (IsIgnored($deviceName));
 		#save to list
 		push(@foundMsgs, $deviceName);
 		#
@@ -1363,7 +1391,7 @@ KNX_Parse { #PBP
 		#########################
 	}
 	
-	Log3 ($name, 5, "exit parse");
+	Log3 ($name, 5, "KNX_parse -exit");
 	
 	#return values
 	return @foundMsgs;
@@ -1379,6 +1407,13 @@ KNX_Notify { #PBP
 	my $ownName = $ownHash->{NAME};
 	#Device that created the events
 	my $callName = $callHash->{NAME}; 
+	return if(IsDisabled($ownName)); # Return without any further action if the module is disabled
+
+	my $events = deviceEvents($callHash, 1);
+	if($callName eq "global" && grep(m/^INITIALIZED|REREADCFG$/x, @{$events}))
+	{
+		# X_FunctionWhoNeedsAttr($hash);
+	}
 
 #PBP	return undef;
 	return;
@@ -1451,7 +1486,7 @@ KNX_checkAndClean { # PBP
 	my $name = $hash->{NAME};
 	my $orgValue = $value;
 	
-	Log3 ($name, 5, "check value: $value, gadName: $gadName");
+	Log3 ($name, 5, "KNX_checkAndClean -enter: check value: $value, gadName: $gadName");
 	
 	#get model
 	my $model = $hash->{GADDETAILS}{$gadName}{MODEL};
@@ -1482,9 +1517,7 @@ KNX_checkAndClean { # PBP
 		}
 	}
 	
-#PBP	return undef if ($found == 0);
-	my $undefined = undef;
-	return $undefined if ($found == 0); # PBP
+	return $UNDEF if ($found == 0); # PBP
 
 	#get min
 	#my $min = $dpttypes{"$model"}{MIN};
@@ -1498,8 +1531,8 @@ KNX_checkAndClean { # PBP
 	
 	$value = KNX_limit ($hash, $value, $gadName, undef);
 
-	Log3 ($name, 3, "check value: input-value $orgValue was casted to $value") if (not($orgValue eq $value));
-	Log3 ($name, 5, "check value: $value, gadName: $gadName, model: $model, pattern: $pattern");
+	Log3 ($name, 3, "KNX_checkAndClean: input-value $orgValue was casted to $value") if (not($orgValue eq $value));
+	Log3 ($name, 5, "KNX_checkAndClean -exit value: $value, gadName: $gadName, model: $model, pattern: $pattern");
 	
 	return $value;
 }
@@ -1594,20 +1627,20 @@ KNX_limit { #PBP
 				$retVal = $max if (defined ($max) and ($retVal > $max));
 			}
 			
-			my $logString = "limit:";
-			$logString .= " DIR: $direction" if (defined ($direction));
-			$logString .= " FACTOR: $factor" if (defined ($factor));
-			$logString .= " OFFSET: $factor" if (defined ($offset));
-			$logString .= " MIN: $factor" if (defined ($min));
-			$logString .= " MAX: $factor" if (defined ($max));
-			Log3 ($name, 5, $logString);
-			Log3 ($name, 5, "limit: modified... Output: $retVal, Input: $value, Model: $model") if ($retVal != $value);
+			my $logString = '';
+			$logString    = "DIR: $direction" if (defined ($direction));
+			$logString   .= " FACTOR: $factor" if (defined ($factor));
+			$logString   .= " OFFSET: $factor" if (defined ($offset));
+			$logString   .= " MIN: $factor" if (defined ($min));
+			$logString   .= " MAX: $factor" if (defined ($max));
+			Log3 ($name, 5, "KNX_limit: $logString");
+			Log3 ($name, 5, "KNX_limit: modified... Output: $retVal, Input: $value, Model: $model") if ($retVal != $value);
 		}
 	}
-	else
-	{
-		#Log3 ($name, 2, "limit: did not execute any action. Value should be numeric, but wasn't...");
-	}
+#	else
+#	{
+#		#Log3 ($name, 2, "limit: did not execute any action. Value should be numeric, but wasn't...");
+#	}
 	
 	return $retVal;
 }
@@ -1619,17 +1652,17 @@ KNX_eval { #PBP
 	my ($hash, $gadName, $state, $evalString) = @_;
 	my $name = $hash->{NAME};
 	my $retVal = undef;
-	
-	Log3 ($name, 5, "Enter eval...name: $name, gadName: $gadName, evalString: \n$evalString\n");
-	
+
+	Log3 ($name, 5, "KNX_Eval -enter: $name, gadName: $gadName, evalString: \n$evalString");
+
 #	$retVal = eval $evalString;
 	$retVal = eval($evalString); #PBP
-							
-	Log3 ($name, 2, "set name: Eval error - $@") if $@;
-	Log3 ($name, 5, "Exit eval...result: $retVal");
+
+	Log3 ($name, 2, "KNX_Eval -error: $@") if $@;
+	Log3 ($name, 5, "KNX_Eval -exit: result: $retVal");
 
 	$retVal = "ERROR" if (not defined ($retVal));
-	
+
 	return $retVal;
 }
 
@@ -1639,13 +1672,13 @@ sub
 KNX_encodeByDpt { #PBP
 	my ($hash, $value, $gadName) = @_;
 	my $name = $hash->{NAME};
-	
-	Log3 ($name, 5, "encode value: $value, gadName: $gadName");
-	
-	#get model
-	my $model = $hash->{GADDETAILS}{$gadName}{MODEL};
+
+#	Log3 ($name, 5, "encode value: $value, gadName: $gadName");
+#	
+#	#get model
+	my $model = $hash->{GADDETAILS}{$gadName}{MODEL}; 
 	my $code = $dpttypes{$model}{CODE};
-	
+
 	#return unchecked, if this is a autocreate-device
 #	return undef if ($model eq $modelErr);
 	return if ($model eq $modelErr); #PBP
@@ -1654,11 +1687,11 @@ KNX_encodeByDpt { #PBP
 	my $numval = undef;
 	#this one stores the translated hex-value
 	my $hexval = undef;
-	
-	Log3 ($name, 5, "encode model: $model, code: $code, value: $value");
-		
+
+	Log3 ($name, 5, "KNX_encodeByDpt: $gadName model: $model, code: $code, value: $value");
+
 	$value = KNX_limit ($hash, $value, $gadName, "ENCODE");
-	
+
 	#Binary value
 	if ($code eq "dpt1")
 	{
@@ -1674,12 +1707,14 @@ KNX_encodeByDpt { #PBP
 	#Step value (two-bit) 
 	elsif ($code eq "dpt2")
 	{
-		$numval = "00" if ($value =~ m/off/ix);
-		$numval = "01" if ($value =~ m/on/ix);
-		$numval = "02" if ($value =~ m/forceoff/i);
-		$numval = "03" if ($value =~ m/forceon/i);
-		
-		$hexval = $numval;
+		$numval = 0; # default
+		$numval = $value if ($value =~ m/^0?[0-3]$/ix); ## JoeALLb request
+		$numval = 0 if ($value =~ m/off/ix);
+		$numval = 1 if ($value =~ m/on/ix);
+		$numval = 2 if ($value =~ m/forceoff/i);
+		$numval = 3 if ($value =~ m/forceon/i);
+
+		$hexval = sprintf("%.2x",$numval);
 	}
 	#Step value (four-bit) 
 	elsif ($code eq "dpt3")
@@ -1855,20 +1890,15 @@ KNX_encodeByDpt { #PBP
 	elsif ($code eq "dpt16")
 	{
 		#convert to latin-1
-		$value = encode("iso-8859-1", decode("utf8", $value));
+		$numval = encode("iso-8859-1", decode("utf8", $value));
 
 		#convert to hex-string
-		my $dat = unpack "H*", $value;
+		my $dat = unpack "H*", $numval;
 
 		$dat = '20' if ($value =~ /^$PAT_DPT16_CLR/x); #MH send a single blank if "clear line string" 
 
-		#format for 14-byte-length
-		$dat = sprintf("%-028s",$dat);
-		#append leading zeros
-		$dat = "00" . $dat;
-
-		$numval = $value;
-		$hexval = $dat;
+		#format for 14-byte-length and append leading zeros
+		$hexval = sprintf("00%.28s",$dat);
 	} 
 	#DateTime
 	elsif ($code eq "dpt19")
@@ -1911,12 +1941,11 @@ KNX_encodeByDpt { #PBP
 	}
 	else
 	{
-		Log3 ($name, 2, "encode model: $model, no valid model defined");
-#		return undef;
+		Log3 ($name, 2, "KNX_encodeByDpt: $gadName,  model: $model not valid");
 		return; # PBP
 	}
 	
-	Log3 ($name, 5, "encode model: $model, code: $code, value: $value, numval: $numval, hexval: $hexval");
+	Log3 ($name, 5, "KNX_encodeByDpt -exit: model: $model, code: $code, value: $value, numval: $numval, hexval: $hexval");
 	return $hexval;
 }
 
@@ -1927,12 +1956,12 @@ KNX_decodeByDpt { #PBP
 	my ($hash, $value, $gadName) = @_;
 	my $name = $hash->{NAME};
 	
-	Log3 ($name, 5, "decode value: $value, gadName: $gadName");
-	
+#	Log3 ($name, 5, "decode value: $value, gadName: $gadName");
+
 	#get model
 	my $model = $hash->{GADDETAILS}{$gadName}{MODEL};
 	my $code = $dpttypes{$model}{CODE};
-	
+
 	#return unchecked, if this is a autocreate-device
 #	return undef if ($model eq $modelErr);
 	return if ($model eq $modelErr); #PBP
@@ -1941,12 +1970,12 @@ KNX_decodeByDpt { #PBP
 	my $numval = undef;
 	#this one contains the return-value
 	my $state = undef;
-	
-	Log3 ($name, 5, "decode model: $model, code: $code, value: $value");
-	
+
+	Log3 ($name, 5, "KNX_decodeByDpt -enter: model: $model, code: $code, value: $value");
+
 	my $min = $dpttypes{"$model"}{MIN};
 	my $max = $dpttypes{"$model"}{MAX};
-	
+
 	#Binary value
 	if ($code eq "dpt1")
 	{
@@ -1960,10 +1989,14 @@ KNX_decodeByDpt { #PBP
 		#get numeric value
 		$numval = hex ($value);
 
-		$state = "off" if ($numval == 0);
-		$state = "on" if ($numval == 1);
-		$state = "forceOff" if ($numval == 2);
-		$state = "forceOn" if ($numval == 3);
+		if ($model eq 'dpt2.000') {  ## JoeALLb request
+			$state = $numval;
+		} else {
+			$state = "off" if ($numval == 0);
+			$state = "on" if ($numval == 1);
+			$state = "forceOff" if ($numval == 2);
+			$state = "forceOn" if ($numval == 3);
+		}
 	}
 	#Step value (four-bit) 
 	elsif ($code eq "dpt3")
@@ -1986,9 +2019,9 @@ KNX_decodeByDpt { #PBP
 		$state = 6 if ($numval >= 5);
 		$state = 3 if ($numval >= 6);
 		$state = 1 if ($numval >= 7);
-				
+
 		$state = 0 - $state if ($sign == 1);
-		
+
 		$state = sprintf ("%.0f", $state);
 	}
 	#1-Octet unsigned value
@@ -2095,19 +2128,20 @@ KNX_decodeByDpt { #PBP
 		$state  = "";
 		$value =~ s/\s*$//gx; #MH strip trailing blanks 
 
-		for (my $i = 0; $i < 14; $i++) 
-		{
-			my $c = hex(substr($value, $i * 2, 2));
-			#exit at string terminator, otherwise append current char
-			if (($i != 0) and ($c == 0))
-			{
-				$i = 14;
-			} 
-			else 
-			{
-				$state .=  sprintf("%c", $c);
-			}
-		}
+		$state = pack("H*",$value);
+#		for (my $i = 0; $i < 14; $i++) 
+#		{
+#			my $c = hex(substr($value, $i * 2, 2));
+#			#exit at string terminator, otherwise append current char
+#			if (($i != 0) and ($c == 0))
+#			{
+#				$i = 14;
+#			} 
+#			else 
+#			{
+#				$state .=  sprintf("%c", $c);
+#			}
+#		}
 
 		#convert to latin-1
 		$state = encode ("utf8", $state) if ($model =~ m/16.001/x);
@@ -2127,7 +2161,7 @@ KNX_decodeByDpt { #PBP
 		my $day   = ($date & 0x1F) >> 0;
 		my $month = ($date & 0x0F00) >> 8;
 		my $year  = ($date & 0xFF0000) >> 16;
-		
+
 		$year += 1900;
 		$state = sprintf("%02d.%02d.%04d_%02d:%02d:%02d", $day, $month, $year, $hours, $mins, $secs);
 	}
@@ -2152,22 +2186,25 @@ KNX_decodeByDpt { #PBP
 	} 
 	else
 	{
-		Log3 ($name, 2, "decode model: $model, no valid model defined");
+		Log3 ($name, 2, "KNX_decodeByDpt: $model, no valid model defined");
 #		return undef;
 		return; # PBP
 	}
-	
+
 	#append unit, if supplied
 	my $unit = $dpttypes{$model}{UNIT};
 	$state = $state . " " . $unit if (defined ($unit) and not($unit eq ""));
-		
-	Log3 ($name, 5, "decode model: $model, code: $code, value: $value, numval: $numval, state: $state");
+
+	Log3 ($name, 5, "KNX_decodeByDpt -exit: model: $model, code: $code, value: $value, numval: $numval, state: $state");
 	return $state;
 }
 
 1;
 
 =pod
+=item [device]
+=item summary devices communicating via the IO-Device TUL (via knxd-daemon) or KNXTUL with KNX-bus
+=item summary_DE Ger&auml;te kommunizieren &uuml;ber IO-Ger&auml;t TUL (via knxd-daemon) oder KNXTUL mit dem KNX-Bus 
 =begin html
 
 <style>
@@ -2196,12 +2233,12 @@ KNX_decodeByDpt { #PBP
     width: 380px;
     border: 3px solid gray; }
 </style>
-<p><a name="KNX"></a></p>
+<a name="KNX"></a>
 <h3>KNX</h3>
 <ul>
 <p>KNX is a standard for building automation / home automation. It is mainly based on a twisted pair wiring, but also other mediums (ip, wireless) are specified.</p>
 <p>For getting started, please refer to this document: <a href="https://www2.knx.org/media/docs/downloads/Marketing/Flyers/KNX-Basics/KNX-Basics_en.pdf">KNX-Basics</a></p>
-<p>While the module <a href="#TUL">TUL</a> represents the connection to the KNX network, the KNX modules represent individual KNX devices. <br /> 
+<p>While the <a href="#TUL">TUL-module</a> or the <a href="#KNXTUL">KNXTUL-module</a> represent the connection to the KNX network, the KNX modules represent individual KNX devices. <br /> 
 This module provides a basic set of operations (on, off, toggle, on-until, on-for-timer) to switch on/off KNX devices and to send values to the bus.&nbsp;</p>
 <p>Sophisticated setups can be achieved by combining a number of KNX module instances. Therefore you can define a number of different GAD/DPT combinations per each device.</p>
 <p>KNX defines a series of Datapoint Type as standard data types used to allow general interpretation of values of devices manufactured by different companies. These datatypes are used to interpret the status of a device, so the state in FHEM will then show the correct value.</p>
@@ -2209,19 +2246,13 @@ This module provides a basic set of operations (on, off, toggle, on-until, on-fo
 For every set, there will be a reading containing the sent value.<br /> 
 The reading &lt;state&gt; will be updated with the last sent or received value.&nbsp;</p>
 
-<p>&nbsp;</p>
+<a name="KNXdefine"></a>
 <p><strong>Define</strong></p>
 <p><code>d</code><code>efine &lt;name&gt; KNX &lt;group&gt;:&lt;DPT&gt;:[gadName]:[set|get|listenonly]:[nosuffix] [&lt;group&gt;:&lt;DPT&gt; ..] [IODev]</code></p>
 <p><strong>Important:&nbsp;a KNX device needs at least one&nbsp;concrete DPT. Please refer to <a href="#KNXdpt">available DPT</a>. Otherwise the system cannot en- or decode the messages.</strong><br />
 <strong>Devices defined by autocreate have to be reworked with the suitable dpt. Otherwise they won't be able to work productively.</strong><br />
 <strong>Unless older versions the on-off command and the clickable bulb are not shown in the webfrontend out-of-the box. You have to add webCmd and devStateIcon. See examples...</strong></p>
-<p>Examples:</p>
-<pre style="padding-left: 30px;">define lamp1 KNX 0/10/11:dpt1:listenonly</pre>
-<pre style="padding-left: 30px;">arr lamp1 webCmd on:off</pre>
-<pre style="padding-left: 30px;">attr lamp1 devStateIcon on::off off::on</pre>
-<br>
-<pre style="padding-left: 30px;">define lamp2 KNX 0/10/12:dpt1:steuern 0/10/13:dpt1.001:status</pre>
-<pre style="padding-left: 30px;">define lamp3 KNX 0A0D:dpt1.003 myTul</pre>
+
 <p>The &lt;group&gt; parameters are either a group name notation (0-15/0-15/0-255) or the hex representation of the value (0-f0-f0-ff). All of the defined groups can be used for bus-communication. 
  It is not allowed to have the same group more then once in one device. You can have several devices containing the same adresses.<br /> 
 As described above the parameter &lt;DPT&gt; must contain the corresponding DPT.<br /> 
@@ -2235,7 +2266,15 @@ If you add the option "nosuffix", &lt;getName&gt;, &lt;setName&gt; and &lt;putNa
 <p>Without further attributes, all incoming and outgoing messages are translated into reading &lt;state&gt;.</p>
 <p>If enabled, the module <a href="#autocreate">autocreate</a> is creating a new definition for any unknown sender. The device itself will be NOT fully available, until you added a DPT to the definition. The name will be KNX_nnmmooo where nn is the line adress, mm the area and ooo the device.</p>
 
-<p>&nbsp;</p>
+<p>Examples:</p>
+<code style="padding-left: 30px;">define lamp1 KNX 0/10/11:dpt1:listenonly</code><br/>
+<code style="padding-left: 30px;">arr lamp1 webCmd on:off</code><br/>
+<code style="padding-left: 30px;">attr lamp1 devStateIcon on::off off::on</code><br/>
+<br>
+<code style="padding-left: 30px;">define lamp2 KNX 0/10/12:dpt1:steuern 0/10/13:dpt1.001:status</code><br/>
+<code style="padding-left: 30px;">define lamp3 KNX 0A0D:dpt1.003 myTul</code><br/>
+
+<a name="KNXset"></a>
 <p><strong>Set</strong></p>
 <p><code>set &lt;deviceName&gt; [gadName] &lt;on|off|toggle&gt;<br />
   set &lt;deviceName&gt; [gadName] &lt;on-for-timer|on-until|off-for-timer|off-until&gt;
@@ -2246,21 +2285,20 @@ If you add the option "nosuffix", &lt;getName&gt;, &lt;setName&gt; and &lt;putNa
 After successful sending the value, it is stored in the readings &lt;setName&gt;.</p>
 <p>Example:</p>
 <p><code></code></p>
-<pre style="padding-left: 30px;">set lamp2 on</pre>
-<pre style="padding-left: 30px;">set lamp2 off</pre>
-<pre style="padding-left: 30px;">set lamp2 on-for-timer 10</pre>
-<pre style="padding-left: 30px;">set lamp2 on-until 13:15:00</pre>
-<pre style="padding-left: 30px;">set lamp2 steuern on-until 13:15:00</pre>
-<pre style="padding-left: 30px;">set myThermoDev 23.44</pre>
-<pre style="padding-left: 30px;">set my MessageDev Hallo Welt</pre>
+<code style="padding-left: 30px;">set lamp2 on</code><br/>
+<code style="padding-left: 30px;">set lamp2 off</code><br/>
+<code style="padding-left: 30px;">set lamp2 on-for-timer 10</code><br/>
+<code style="padding-left: 30px;">set lamp2 on-until 13:15:00</code><br/>
+<code style="padding-left: 30px;">set lamp2 steuern on-until 13:15:00</code><br/>
+<code style="padding-left: 30px;">set myThermoDev 23.44</code><br/>
+<code style="padding-left: 30px;">set my MessageDev Hallo Welt</code><br/>
 
-<p>&nbsp;</p>
+<a name="KNXget"></a>
 <p><strong>Get</strong></p>
 <p>If you execute "get" for a KNX-Element the status will be requested a state from the device. The device has to be able to respond to a read - this is not given for all devices.<br /> 
 If the GAD is restricted in the definition with "listenonly", the execution will be refused.<br /> 
 The answer from the bus-device is not shown in the toolbox, but is treated like a regular telegram.</p>
 
-<p>&nbsp;</p>
 <p><strong>Common attributes</strong></p>
 <div class="wrap">
 <p>
@@ -2291,26 +2329,40 @@ The answer from the bus-device is not shown in the toolbox, but is treated like 
 </p>
 </div>
 
-<p>&nbsp;</p>
+<a name="KNXattr"></a>
 <p><strong>Special attributes</strong></p>
-<p><a name="KNXanswerReading"></a> <strong>answerReading</strong></p>
-<ul>If enabled, FHEM answers on read requests. The content of reading &lt;state&gt; is send to the bus as answer. If supplied, the content of the reading &lt;putName&gt; is used to supply the data for the answer.</ul>
-<p><a name="KNXstateRegex"></a> <strong>stateRegex</strong></p>
-<ul>You can pass n pairs of regex-pattern and string to replace, seperated by a slash. Internally the "new" state is always in the format &lt;getName&gt;:&lt;state-value&gt;. The substitution is done every time, a new object is received. You can use this function for converting, adding units, having more fun with icons, ...</ul>
-<ul>This function has only an impact on the content of state - no other functions are disturbed. It is executed directly after replacing the reading-names and setting the formats, but before stateCmd.</ul>
-<p><a name="KNXstateCmd"></a> <strong>stateCmd</strong></p>
-<ul>You can supply a perl-command for modifying state. This command is executed directly before updating the reading - so after renaming, format and regex. Please supply a valid perl command like using the attribute stateFormat.</ul>
-<ul>Unlike stateFormat the stateCmd modifies also the content of the reading, not only the hash-content for visualization.</ul>
-<ul>You can access the device-hash directly in the perl string. You can access "$hash", "$name" and "$state". The return-value overrides "state".</ul>
-<p><a name="KNXputCmd"></a> <strong>putCmd</strong></p>
-<ul>Every time a KNX-value is requested from the bus to FHEM, the content of putCmd is evaluated before the answer is send. You can supply a perl-command for modifying content. This command is executed directly before sending the data. A copy is stored in the reading &lt;putName&gt;.</ul>
-<ul>Each device only knows one putCmd, so you have to take care about the different GAD's in the perl string.</ul>
-<ul>Like in stateCmd you can access the device hash in this perl string. You can access "$hash", "$name" and "$state". "$state" contains the prefilled return-value. The return-value overrides "state".</ul>
-<p><a name="KNXformat"></a> <strong>format</strong></p>
-<ul>The content of this attribute is added to every received value, before this is copied to state.</ul>
+<ul>
+<a name="answerReading"></a><li>answerReading<br/>
+  If enabled, FHEM answers on read requests. The content of reading &lt;state&gt; is send to the bus as answer. If supplied, the content of the reading &lt;putName&gt; is used to supply the data for the answer.</li>
+<br/>
+<a name="stateRegex"></a><li>stateRegex<br/>
+  You can pass n pairs of regex-pattern and string to replace, seperated by a slash. Internally the "new" state is always in the format &lt;getName&gt;:&lt;state-value&gt;. The substitution is done every time, a new object is received. You can use this function for converting, adding units, having more fun with icons, ...<br/>
+  This function has only an impact on the content of state - no other functions are disturbed. It is executed directly after replacing the reading-names and setting the formats, but before stateCmd.</li>
+<br/>
+<a name="stateCmd"></a><li>stateCmd<br/>
+  You can supply a perl-command for modifying state. This command is executed directly before updating the reading - so after renaming, format and regex. Please supply a valid perl command like using the attribute stateFormat.<br/>
+  Unlike stateFormat the stateCmd modifies also the content of the reading, not only the hash-content for visualization.<br/>
+  You can access the device-hash directly in the perl string. You can access "$hash", "$name" and "$state". The return-value overrides "state".</li>
+<br/>
+<a name="putCmd"></a> <li>putCmd<br/>
+  Every time a KNX-value is requested from the bus to FHEM, the content of putCmd is evaluated before the answer is send. You can supply a perl-command for modifying content. This command is executed directly before sending the data. A copy is stored in the reading &lt;putName&gt;.<br/>
+  Each device only knows one putCmd, so you have to take care about the different GAD's in the perl string.<br/>
+  Like in stateCmd you can access the device hash in this perl string. You can access "$hash", "$name" and "$state". "$state" contains the prefilled return-value. The return-value overrides "state".</li>
+<br/>
+<a name="format"></a><li>format<br/>
+  The content of this attribute is added to every received value, before this is copied to state.</li>
+<br/>
+<a name="disable"></a><li>disable<br/>
+  Disable the device if set to <b>1</b>. No send/receive from bus and no set/get possible. Delete this attr to enable device again.</li>
+<br/>
+<a name="listenonly"></a><li>listenonly - This attr is deprecated - do not use - see cmdref device definition for alternatives</li> 
+<a name="readonly"></a><li>readonly - This attr is deprecated - do not use - see cmdref device definition for alternatives</li>
+<a name="slider"></a><li>slider - This attr is deprecated - do not use - see slider example in cmdref for alternatives</li>
+<a name="useSetExtensions"></a><li>useSetExtensions - This attr is deprecated - do not use</li>
+</ul>
 
-<p>&nbsp;</p>
-<p><a name="KNXdpt"></a> <strong>DPT - datapoint-types</strong></p>
+<a name="KNXdpt"></a>
+<p><strong>DPT - datapoint-types</strong></p>
 <p>The following dpt are implemented and have to be assigned within the device definition.</p>
 <ul class="wrap ulpre">
 <li><b>dpt1     </b>     on, off</li>
@@ -2337,7 +2389,8 @@ The answer from the bus-device is not shown in the toolbox, but is treated like 
 <li><b>dpt1.021 </b>  logical or, logical and</li>
 <li><b>dpt1.022 </b>  scene A, scene B</li>
 <li><b>dpt1.023 </b>  move up/down, move and step mode</li>
-<li><b>dpt2     </b>     on, off, forceOn, forceOff</li>
+<li><b>dpt2     </b>     off, on, forceOff, forceOn</li>
+<li><b>dpt2.000 </b>  0,1,2,3</li>
 <li><b>dpt3     </b>     -100..+100</li>
 <li><b>dpt3.007 </b>  -100..+100 %</li>
 <li><b>dpt5     </b>     0..255</li>
@@ -2401,108 +2454,97 @@ The answer from the bus-device is not shown in the toolbox, but is treated like 
 <p>&nbsp;</p>
 <p><strong>More complex examples:</strong></p>
 <p><em>Rollo:</em></p>
-<pre>define rollo KNX 0/10/12:dpt1.008:wdw1 0/10/13:dpt1</pre>
-<p>moves down rollo at window 1:</p>
-<pre>set rollo wdw1 down</pre>
-<p>moves up rollo at window 2:</p>
-<pre>set rollo g2 on</pre>
-<p>moves down rollo at window 2 for 5s:</p>
-<pre>set rollo g2 off-for-timer 5</pre>
-<p>&nbsp;</p>
-<p><em>Object with feedback, icon showing transistions:</em></p>
-<pre>define sps KNX 0/4/0:dpt1:steuern 0/4/1:dpt1:status</pre>
-<pre>attr sps devStateIcon status-on:general_an:Aus status-off:general_aus:Ein steuern.*:hourglass:Aus</pre>
-<pre>attr sps eventMap /steuern on:Ein/steuern off:Aus/</pre>
-<pre>attr sps stateRegex /steuern-[sg]et:/steuern-/ /status-get:/status-/</pre>
-<pre>attr sps webCmd Ein:Aus</pre>
-<p>&nbsp;</p>
+<code>define rollo KNX 0/10/12:dpt1.008:wdw1 0/10/13:dpt1</code><br/>
+<code>set rollo wdw1 down </code>moves down rollo at window 1<br/>
+<code>set rollo g2 on </code>moves up rollo at window 2
+<code>set rollo g2 off-for-timer 5 </code>moves down rollo at window 2 for 5 sec<br/>
+
+<p><em>Object with feedback, icon showing transistions:</em></code><br/>
+<code>define sps KNX 0/4/0:dpt1:steuern 0/4/1:dpt1:status</code><br/>
+<code>attr sps devStateIcon status-on:general_an:Aus status-off:general_aus:Ein steuern.*:hourglass:Aus</code><br/>
+<code>attr sps eventMap /steuern on:Ein/steuern off:Aus/</code><br/>
+<code>attr sps stateRegex /steuern-[sg]et:/steuern-/ /status-get:/status-/</code><br/>
+<code>attr sps webCmd Ein:Aus</code><br/>
+
 <p><em>Object with feedback, state is always showing status:</em></p>
-<pre>define wasser_status KNX 11/3/0:dpt1.001:status:listenonly 11/3/1:dpt1.001:steuern-auf 11/3/2:dpt1.001:steuern-zu</pre>
-<pre>attr wasser_status devStateIcon on:general_an off:general_aus</pre>
-<pre>attr wasser_status stateCmd {sprintf("%s", ReadingsVal($name,"status-get",""))}</pre>
-<pre>attr wasser_status webCmd :</pre>
-<p>&nbsp;</p>
+<code>define wasser_status KNX 11/3/0:dpt1.001:status:listenonly 11/3/1:dpt1.001:steuern-auf 11/3/2:dpt1.001:steuern-zu</code><br/>
+<code>attr wasser_status devStateIcon on:general_an off:general_aus</code><br/>
+<code>attr wasser_status stateCmd {sprintf("%s", ReadingsVal($name,"status-get",""))}</code><br/>
+<code>attr wasser_status webCmd :</code><br/>
+
 <p><em>If requested, fhem answers content of GAD refVal to GAD temp, answer nothing to GAD humidity. Both refVal and temp <b>must</b> have the same dpt-code (e.g dpt9 in this example), else garbage will be returned!:</em></p>
-<pre>define demo KNX 1/0/30:dpt9.001:temp 1/0/31:dpt9.001:humidity 1/0/32:dpt9:refVal</pre>
-<pre>attr demo putCmd {ReadingsNum("demo","refVal-get",0) if ($gadName =~ /temp/);}</pre>
-<p>&nbsp;</p>
+<code>define demo KNX 1/0/30:dpt9.001:temp 1/0/31:dpt9.001:humidity 1/0/32:dpt9:refVal</code><br/>
+<code>attr demo putCmd {ReadingsNum("demo","refVal-get",0) if ($gadName =~ /temp/);}</code><br/>
+
 <p><em>Time master:</em></p>
-<pre>define timedev KNX 0/0/7:dpt10:time 0/0/8:dpt11:date 0/0/9:dpt19</pre>
-<p>Send time to the bus:</p>
-<pre>set timedev [time] now   or   set timedev time 18:33:44</pre> 
-<p>Send date to the bus:</p>
-<pre>set timedev date now   or   set timedev date 01.11.2020</pre>
-<p>Send date <b>and</b> time to the bus (combined):</p>
-<pre>set timedev g3 now   or   set timedev g3 01.11.2020_18:33:44</pre>
-<p>&nbsp;</p>
+<code>define timedev KNX 0/0/7:dpt10:time 0/0/8:dpt11:date 0/0/9:dpt19</code><br/>
+<code>set timedev date now   or   set timedev date 18:33:44 </code>Send date to the bus<br/>
+<code>set timedev [time] now   or   set timedev time 18:33:44 </code>Send time to the bus<br/>
+<code>set timedev g3 now   or   set timedev g3 01.11.2020_18:33:44 </code>Send date <b>and</b> time to the bus (combined)<br/>
+
 <p><em>Send text to the bus:</em></p>
-<pre>define textdev KNX 0/0/9:dpt16</pre>
-<p>send text to Bus (max 14 Char.):
-<pre>set textdev g1 AbCdEfGhIjkLmN</pre>
-<p>delete text on the KNX display:
-<pre>set textdev g1 &gt;CLR&lt;</pre> 
-<p>&nbsp;</p>
+<code>define textdev KNX 0/0/9:dpt16</code><br/>
+<code>set textdev g1 AbCdEfGhIjkLmN </code>send text to Bus (max 14 Char.)<br/>
+<code>set textdev g1 &gt;CLR&lt; </code>delete text on the KNX display<br/> 
+
 <p><em>Slider:</em></p>
-<pre>define newTest KNX 15/2/2:dpt5</pre>
-<pre>attr newTest webCmd g1</pre>
-<pre>attr newTest widgetOverride g1:slider,0,5,100</pre>
-<p>&nbsp;</p>
-<p><em>Shows two independent slider and on/off buttons:</em></p>
-<pre>define newTest KNX 15/2/9:dpt5 15/2/3:dpt5 15/2/2:dpt1.001:power</pre>
-<pre>attr newTest IODev knxd</pre>
-<pre>attr newTest eventMap {\</pre>
-	<pre>  usr=&gt;{\</pre>
-		<pre>    '^getG1 (\d+)'=&gt;'g1 $1',\</pre>
-		<pre>    '^getG2 (\d+)'=&gt;'g2 $1',\</pre>
-		<pre>    '^An'=&gt;'power on',\</pre>
-		<pre>    '^Aus'=&gt;'power off',\</pre>
-	<pre>  },\</pre>
-	<pre>  fw=>{\</pre>
-		<pre>    '^getG1 (\d+)'=&gt;'getG1',\</pre>
-		<pre>    '^getG2 (\d+)'=&gt;'getG2',\</pre>
-		<pre>    '^power-get'=&gt;'state',\</pre>
-	<pre>  }\</pre>
-<pre>}</pre>
-<pre>attr newTest webCmd An:Aus::Label1:getG1::Label2:getG2</pre>
-<pre>attr newTest widgetOverride getG1:slider,0,5,100 getG2:slider,0,5,100</pre>
-<p>&nbsp;</p>
-<p><em>Has a synchronized slider for send and reveive-values, on/off-buttons and a state-icon:</em></p>
-  <pre>define testDev11 KNX 15/1/19:dpt1:steuern 15/1/20:dpt1:status 15/1/21:dpt5.001:dimmwert:nosuffix\</pre>
-  <pre>attr testDev11 IODev knxd\</pre>
-  <pre>attr testDev11 eventMap {\</pre>
-  <pre>#Von Device nach Frontend sollte eigentlich bei einem Dezimalwert\\</pre>
-  <pre>#das Reading status-get angezeigt werden. Geht aber nicht. Deshalb: stateCmd...\\</pre>
-	<pre>  dev=>{\\</pre>
-    <pre>  #		'^(\d+)?.%$'=>ReadingsVal($dev,'status-get',"Zefix..."),\\</pre>
-	<pre>  },\\</pre>
-    <pre>  #Frontend nach Device: Ersetze "An"/"Aus" durch "Steuern on/off".\\</pre>
-    <pre>  #Alle numerischen Werte vom Slider landen in "dimmwert"\\</pre>
-	<pre>  usr=>{\\</pre>
-		<pre>    '^An'=&gt;'steuern on',\\</pre>
-		<pre>    '^Aus'=&gt;'steuern off',\\</pre>
-	<pre>  },\\</pre>
-    <pre>  #Tuning f$uuml;r die Detailseite...Zeige An/Aus richtig an\\</pre>
-	<pre>  fw=>{\\</pre>
-		<pre>    '^An'=&gt;'An',\\</pre>
-		<pre>    '^Aus'=&gt;'Aus',\\</pre>
-	<pre>  }\\</pre>
-  <pre>}\</pre>
-  <pre>attr testDev11 stateRegex /steuern-[sg]et:/steuern-/ /status-get:/status-/</pre>
-  <pre>attr testDev11 stateCmd {\</pre>
-    <pre>    if ($state =~ m/dimmwert:/i) {'status-' . ReadingsVal($name,"status-get","")}\</pre>
-    <pre>    else {return $state}\</pre>
-  <pre>}</pre>
-  <pre>attr testDev11 devStateIcon status-on:general_an:Aus status-off:general_aus:Ein steuern.*:hourglass:Aus</pre>
-  <pre>#Dimmwert muss ein reales reading sein. Kann auch ...-get sein, wenn\</pre>
-  <pre>#nosuffix nicht angegeben ist.\</pre>
-  <pre>#Achtung: bei einem Userreading sind die Werte nicht persistent, also\</pre>
-  <pre>#nicht machen!!!\</pre>
-  <pre>attr testDev11 webCmd An:Aus:dimmwert\</pre>
-  <pre>attr testDev11 widgetOverride dimmwert:slider,0,5,100\</pre>
+<code>define newTest KNX 15/2/2:dpt5</code><br/>
+<code>attr newTest webCmd g1</code><br/>
+<code>attr newTest widgetOverride g1:slider,0,5,100</code><br/>
+
+<p><em>Two independent slider and on/off buttons:</em></p>
+<code>define newTest KNX 15/2/9:dpt5 15/2/3:dpt5 15/2/2:dpt1.001:power</code><br/>
+<code>attr newTest IODev knxd</code><br/>
+<code>attr newTest eventMap { usr=&gt;{'^getG1 (\d+)'=&gt;'g1 $1','^getG2 (\d+)'=&gt;'g2 $1','^An'=&gt;'power on','^Aus'=&gt;'power off'}, \</code><br/>
+<code style="padding-left: 20px;">fw=>{'^getG1 (\d+)'=&gt;'getG1','^getG2 (\d+)'=&gt;'getG2','^power-get'=&gt;'state'} \</code><br/>
+<code>}</code><br/>
+<code>attr newTest webCmd An:Aus::Label1:getG1::Label2:getG2</code><br/>
+<code>attr newTest widgetOverride getG1:slider,0,5,100 getG2:slider,0,5,100</code><br/>
+
+<p><em>Synchronized slider for send and reveive-values, on/off-buttons and a state-icon:</em></p>
+  <code>define testDev11 KNX 15/1/19:dpt1:steuern 15/1/20:dpt1:status 15/1/21:dpt5.001:dimmwert:nosuffix\</code><br/>
+  <code>attr testDev11 IODev knxd</code><br/>
+  <code>attr testDev11 eventMap {\</code><br/>
+  <code style="padding-left: 20px;">#Von Device nach Frontend sollte eigentlich bei einem Dezimalwert \</code><br/>
+  <code style="padding-left: 20px;">#das Reading status-get angezeigt werden. Geht aber nicht. Deshalb: stateCmd... \</code><br/>
+  <code style="padding-left: 20px;">dev=>{# '^(\d+)?.%$'=>ReadingsVal($dev,'status-get',"Zefix...")} \</code><br/>
+  <code style="padding-left: 20px;">#Frontend nach Device: Ersetze "An"/"Aus" durch "Steuern on/off". \</code><br/>
+  <code style="padding-left: 20px;">#Alle numerischen Werte vom Slider landen in "dimmwert" \</code><br/>
+  <code style="padding-left: 20px;">usr=>{'^An'=&gt;'steuern on', '^Aus'=&gt;'steuern off'}, \</code><br/>
+  <code style="padding-left: 20px;">#Tuning f$uuml;r die Detailseite...Zeige An/Aus richtig an \</code><br/>
+  <code style="padding-left: 20px;">fw=>{'^An'=&gt;'An', '^Aus'=&gt;'Aus'} \</code><br/>
+  <code style="padding-left: 20px;">}</code><br/>
+  <code>attr testDev11 stateRegex /steuern-[sg]et:/steuern-/ /status-get:/status-/</code><br/>
+  <code>attr testDev11 stateCmd {\</code><br/>
+  <code style="padding-left: 20px;">if ($state =~ m/dimmwert:/i) {'status-' . ReadingsVal($name,"status-get","")}\</code><br/>
+  <code style="padding-left: 20px;">else {return $state}\</code><br/>
+  <code>}</code><br/>
+  <code>attr testDev11 devStateIcon status-on:general_an:Aus status-off:general_aus:Ein steuern.*:hourglass:Aus</code><br/>
+  <code>#Dimmwert muss ein reales reading sein. Kann auch ...-get sein, wenn</code><br/>
+  <code>#nosuffix nicht angegeben ist.</code><br/>
+  <code>#Achtung: bei einem Userreading sind die Werte nicht persistent, also nicht machen!!!</code><br/>
+  <code>attr testDev11 webCmd An:Aus:dimmwert</code><br/>
+  <code>attr testDev11 widgetOverride dimmwert:slider,0,5,100</code><br/>
+
+<p><em>Remap values to/from Bus:</em><br />
+Problem: the Bus-device send's and expects values 0,31,63,95,127,159,191,223,255 but you want 0-8 in your UI...</p>
+<code>
+define testStufen KNX 0/4/2:dpt5:StufeIst:get 0/4/7:dpt5:StufeSoll:set<br />
+attr testStufen eventMap { usr => {'^Stufe.(\d)$' => '".sprintf("StufeSoll %d",$1*32 -1)."' }, fw => {'^Stufe.(\d)$' => 'Stufe'} }<br />
+attr testStufen stateCmd {if ($gadName =~ 'Stufe(Ist|Soll)') { \</code><br />
+  <code style="padding-left: 40px;">my $newval = int(($state +1) / 32); \</code><br />
+  <code style="padding-left: 40px;">#Log3 $name,1, "StateCmd2: $name $gadName Stufe$1 $state -> $newval"; \</code><br />
+  <code style="padding-left: 40px;">fhem "sleep 0.1;setreading $name Stufe $newval"; \</code><br />
+  <code style="padding-left: 40px;">OldValue($name); \</code><br />
+  <code style="padding-left: 20px;">} else { \</code><br /> 
+  <code style="padding-left: 40px;">$state; \</code><br />
+  <code style="padding-left: 20px;">} \</code><br />
+<code>}<br />
+attr testStufen widgetOverride Stufe:slider,0,1,8<br />
+</code><br />
+
 </ul>
+<br />
 
 =end html
-=device
-=item summary Communicates to KNX via module TUL
-
 =cut
