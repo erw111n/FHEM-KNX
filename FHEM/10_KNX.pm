@@ -41,7 +41,7 @@
 # MH  20201202 dpt10 compatibility with widgetoverride :time, docu formatting
 # MH  20201207 improve code (PerlBestPractices) changes marked with #PBP, added x-flag to most of regex, fixed dpt16 
 # MH  20201210 add docu example for dpt16, fix docu indent.
-# MH  202012xx add Evolution-version string, add dpt2.000 (JoeALLb), correction to "unknow argument..."  
+# MH  20201223 add Evolution-version string, add dpt2.000 (JoeALLb), correction to "unknow argument..."  
 #              new attr disable, simplify set-cmd logic, removed 'use SetExtensions', rework DbLogsplit logic    
 
 
@@ -53,7 +53,7 @@ use Encode;
 #use SetExtensions;
 
 ### MH Evolution Version string
-my $Eversion = 'E04.00 dd-mm-2020';
+my $Eversion = 'E04.00 23-12-2020';
 
 #set to 1 for debug
 my $debug = 0;
@@ -2232,6 +2232,9 @@ KNX_decodeByDpt { #PBP
     padding: 3px;
     width: 380px;
     border: 3px solid gray; }
+  .pad20l {padding-left: 20px;}
+  .pad30l {padding-left: 30px;}
+  .pad40l {padding-left: 40px;}
 </style>
 <a name="KNX"></a>
 <h3>KNX</h3>
@@ -2241,7 +2244,8 @@ KNX_decodeByDpt { #PBP
 <p>While the <a href="#TUL">TUL-module</a> or the <a href="#KNXTUL">KNXTUL-module</a> represent the connection to the KNX network, the KNX modules represent individual KNX devices. <br /> 
 This module provides a basic set of operations (on, off, toggle, on-until, on-for-timer) to switch on/off KNX devices and to send values to the bus.&nbsp;</p>
 <p>Sophisticated setups can be achieved by combining a number of KNX module instances. Therefore you can define a number of different GAD/DPT combinations per each device.</p>
-<p>KNX defines a series of Datapoint Type as standard data types used to allow general interpretation of values of devices manufactured by different companies. These datatypes are used to interpret the status of a device, so the state in FHEM will then show the correct value.</p>
+<p>KNX defines a series of Datapoint Type as standard data types used to allow general interpretation of values of devices manufactured by different companies.
+ These datatypes are used to interpret the status of a device, so the state in FHEM will then show the correct value.</p>
 <p>For each received telegram there will be a reading with containing the received value and the sender address.<br /> 
 For every set, there will be a reading containing the sent value.<br /> 
 The reading &lt;state&gt; will be updated with the last sent or received value.&nbsp;</p>
@@ -2256,23 +2260,27 @@ The reading &lt;state&gt; will be updated with the last sent or received value.&
 <p>The &lt;group&gt; parameters are either a group name notation (0-15/0-15/0-255) or the hex representation of the value (0-f0-f0-ff). All of the defined groups can be used for bus-communication. 
  It is not allowed to have the same group more then once in one device. You can have several devices containing the same adresses.<br /> 
 As described above the parameter &lt;DPT&gt; must contain the corresponding DPT.<br /> 
-The optional parameteter [gadName] may contain an alias for the GAD.&nbsp;The name must not cotain one of the following strings: on, off, on-for-timer, on-until, off-for-timer, off-until, toggle, raw, rgb, string, value, set, get, listenonly.<br />
-Especially if answerReading is set to 1, it might be useful to modifiy the behaviour of single GADs. If you want to restrict the GAD, you can raise the flags "get", "set", or "listenonly". The usage should be self-explainable. It is not possible to combine the flags.<br /> 
+The optional parameteter [gadName] may contain an alias for the GAD. The name must not contain one of the following strings: on, off, on-for-timer,
+ on-until, off-for-timer, off-until, toggle, raw, rgb, string, value, set, get, listenonly.<br />
+Especially if answerReading is set to 1, it might be useful to modifiy the behaviour of single GADs. If you want to restrict the GAD, you can raise the flags "get", "set", or "listenonly".
+ The usage should be self-explanatory. It is not possible to combine the flags.<br /> 
 Furthermore you can supply a IO-Device directly at startup. This can be done later on via attribute as well.</p>
 <p>The GAD's are per default named with "g&lt;number&gt;". The correspunding readings are calles getG&lt;number&gt;, setG&lt;number&gt; and putG&lt;number&gt;.<br /> 
-If you supply &lt;gadName&gt; this name is used instead. The readings are &lt;gadName&gt;-get, &lt;gadName&gt;-set and &lt;gadName&gt;-put. We will use the synonyms &lt;getName&gt;, &lt;setName&gt; and &lt;putName&gt; in this documentation.
+If you supply &lt;gadName&gt; this name is used instead. The readings are &lt;gadName&gt;-get, &lt;gadName&gt;-set and &lt;gadName&gt;-put. 
+We will use the synonyms &lt;getName&gt;, &lt;setName&gt; and &lt;putName&gt; in this documentation.
 If you add the option "nosuffix", &lt;getName&gt;, &lt;setName&gt; and &lt;putName&gt; have the identical name - only &lt;gadName&gt;.</p>
 <p>Per default, the first group is used for sending. If you want to send via a different group, you have to address it it (set &lt;name&gt; &lt;gadName&gt; value).</p>
 <p>Without further attributes, all incoming and outgoing messages are translated into reading &lt;state&gt;.</p>
-<p>If enabled, the module <a href="#autocreate">autocreate</a> is creating a new definition for any unknown sender. The device itself will be NOT fully available, until you added a DPT to the definition. The name will be KNX_nnmmooo where nn is the line adress, mm the area and ooo the device.</p>
+<p>If enabled, the module <a href="#autocreate">autocreate</a> is creating a new definition for any unknown sender. The device itself will be NOT fully available,
+ until you added a DPT to the definition. The name will be KNX_nnmmooo where nn is the line adress, mm the area and ooo the device.</p>
 
 <p>Examples:</p>
-<code style="padding-left: 30px;">define lamp1 KNX 0/10/11:dpt1:listenonly</code><br/>
-<code style="padding-left: 30px;">arr lamp1 webCmd on:off</code><br/>
-<code style="padding-left: 30px;">attr lamp1 devStateIcon on::off off::on</code><br/>
+<code class="pad30l">define lamp1 KNX 0/10/11:dpt1:listenonly</code><br/>
+<code class="pad30l">arr lamp1 webCmd on:off</code><br/>
+<code class="pad30l">attr lamp1 devStateIcon on::off off::on</code><br/>
 <br>
-<code style="padding-left: 30px;">define lamp2 KNX 0/10/12:dpt1:steuern 0/10/13:dpt1.001:status</code><br/>
-<code style="padding-left: 30px;">define lamp3 KNX 0A0D:dpt1.003 myTul</code><br/>
+<code class="pad30l">define lamp2 KNX 0/10/12:dpt1:steuern 0/10/13:dpt1.001:status</code><br/>
+<code class="pad30l">define lamp3 KNX 0A0D:dpt1.003 myTul</code><br/>
 
 <a name="KNXset"></a>
 <p><strong>Set</strong></p>
@@ -2280,18 +2288,21 @@ If you add the option "nosuffix", &lt;getName&gt;, &lt;setName&gt; and &lt;putNa
   set &lt;deviceName&gt; [gadName] &lt;on-for-timer|on-until|off-for-timer|off-until&gt;
 &lt;timespec&gt;<br />
   set &lt;deviceName&gt; [gadName] &lt;value&gt;<br /></code></p>
-<p>Set sends the given value to the bus.<br /> If &lt;gadName&gt; is omitted, the first listed GAD of the device is used. If the GAD is restricted in the definition with "get" or "listenonly", the set-command will be refused.<br /> 
-<strong>For dpt1 and dpt1.001 valid values are on, off and toggle. Also the timer-functions can be used. For all other binary DPT (dpt1.xxx) the min- and max-values can be used for en- and decoding alternatively to on/off. This is different to older versions.</strong><br /> 
+<p>Set sends the given value to the bus.<br /> If &lt;gadName&gt; is omitted, the first listed GAD of the device is used. 
+ If the GAD is restricted in the definition with "get" or "listenonly", the set-command will be refused.<br /> 
+<strong>For dpt1 and dpt1.001 valid values are on, off and toggle. Also the timer-functions can be used. 
+ For all other binary DPT (dpt1.xxx) the min- and max-values can be used for en- and decoding alternatively to on/off. 
+ This is different to older versions.</strong><br /> 
 After successful sending the value, it is stored in the readings &lt;setName&gt;.</p>
 <p>Example:</p>
 <p><code></code></p>
-<code style="padding-left: 30px;">set lamp2 on</code><br/>
-<code style="padding-left: 30px;">set lamp2 off</code><br/>
-<code style="padding-left: 30px;">set lamp2 on-for-timer 10</code><br/>
-<code style="padding-left: 30px;">set lamp2 on-until 13:15:00</code><br/>
-<code style="padding-left: 30px;">set lamp2 steuern on-until 13:15:00</code><br/>
-<code style="padding-left: 30px;">set myThermoDev 23.44</code><br/>
-<code style="padding-left: 30px;">set my MessageDev Hallo Welt</code><br/>
+<code class="pad30l"">set lamp2 on</code><br/>
+<code class="pad30l">set lamp2 off</code><br/>
+<code class="pad30l">set lamp2 on-for-timer 10</code><br/>
+<code class="pad30l">set lamp2 on-until 13:15:00</code><br/>
+<code class="pad30l">set lamp2 steuern on-until 13:15:00</code><br/>
+<code class="pad30l">set myThermoDev 23.44</code><br/>
+<code class="pad30l">set my MessageDev Hallo Welt</code><br/>
 
 <a name="KNXget"></a>
 <p><strong>Get</strong></p>
@@ -2333,19 +2344,23 @@ The answer from the bus-device is not shown in the toolbox, but is treated like 
 <p><strong>Special attributes</strong></p>
 <ul>
 <a name="answerReading"></a><li>answerReading<br/>
-  If enabled, FHEM answers on read requests. The content of reading &lt;state&gt; is send to the bus as answer. If supplied, the content of the reading &lt;putName&gt; is used to supply the data for the answer.</li>
+  If enabled, FHEM answers on read requests. The content of reading &lt;state&gt; is send to the bus as answer. 
+  If supplied, the content of the reading &lt;putName&gt; is used to supply the data for the answer.</li>
 <br/>
 <a name="stateRegex"></a><li>stateRegex<br/>
-  You can pass n pairs of regex-pattern and string to replace, seperated by a slash. Internally the "new" state is always in the format &lt;getName&gt;:&lt;state-value&gt;. The substitution is done every time, a new object is received. You can use this function for converting, adding units, having more fun with icons, ...<br/>
+  You can pass n pairs of regex-pattern and string to replace, seperated by a slash. Internally the "new" state is always in the format &lt;getName&gt;:&lt;state-value&gt;. 
+  The substitution is done every time, a new object is received. You can use this function for converting, adding units, having more fun with icons, ...<br/>
   This function has only an impact on the content of state - no other functions are disturbed. It is executed directly after replacing the reading-names and setting the formats, but before stateCmd.</li>
 <br/>
 <a name="stateCmd"></a><li>stateCmd<br/>
-  You can supply a perl-command for modifying state. This command is executed directly before updating the reading - so after renaming, format and regex. Please supply a valid perl command like using the attribute stateFormat.<br/>
+  You can supply a perl-command for modifying state. This command is executed directly before updating the reading - so after renaming, format and regex. 
+  Please supply a valid perl command like using the attribute stateFormat.<br/>
   Unlike stateFormat the stateCmd modifies also the content of the reading, not only the hash-content for visualization.<br/>
   You can access the device-hash directly in the perl string. You can access "$hash", "$name" and "$state". The return-value overrides "state".</li>
 <br/>
 <a name="putCmd"></a> <li>putCmd<br/>
-  Every time a KNX-value is requested from the bus to FHEM, the content of putCmd is evaluated before the answer is send. You can supply a perl-command for modifying content. This command is executed directly before sending the data. A copy is stored in the reading &lt;putName&gt;.<br/>
+  Every time a KNX-value is requested from the bus to FHEM, the content of putCmd is evaluated before the answer is send. You can supply a perl-command for modifying content. 
+  This command is executed directly before sending the data. A copy is stored in the reading &lt;putName&gt;.<br/>
   Each device only knows one putCmd, so you have to take care about the different GAD's in the perl string.<br/>
   Like in stateCmd you can access the device hash in this perl string. You can access "$hash", "$name" and "$state". "$state" contains the prefilled return-value. The return-value overrides "state".</li>
 <br/>
@@ -2447,7 +2462,7 @@ The answer from the bus-device is not shown in the toolbox, but is treated like 
 <li><b>dpt19    </b>     01.12.2020_01:02:03</li>
 <li><b>dpt19.001</b>  01.12.2020_01:02:03</li>
 <li><b>dpt20.102</b>  HVAC mode</li>
-<li><b>dpt22.101</b>  not yet implemented
+<li><b>dpt22.101</b>  not yet implemented</li>
 <li><b>dpt232   </b>     RGB-Value RRGGBB</li>
 </ul>
 
@@ -2459,7 +2474,7 @@ The answer from the bus-device is not shown in the toolbox, but is treated like 
 <code>set rollo g2 on </code>moves up rollo at window 2
 <code>set rollo g2 off-for-timer 5 </code>moves down rollo at window 2 for 5 sec<br/>
 
-<p><em>Object with feedback, icon showing transistions:</em></code><br/>
+<p><em>Object with feedback, icon showing transistions:</em><br/>
 <code>define sps KNX 0/4/0:dpt1:steuern 0/4/1:dpt1:status</code><br/>
 <code>attr sps devStateIcon status-on:general_an:Aus status-off:general_aus:Ein steuern.*:hourglass:Aus</code><br/>
 <code>attr sps eventMap /steuern on:Ein/steuern off:Aus/</code><br/>
@@ -2472,7 +2487,8 @@ The answer from the bus-device is not shown in the toolbox, but is treated like 
 <code>attr wasser_status stateCmd {sprintf("%s", ReadingsVal($name,"status-get",""))}</code><br/>
 <code>attr wasser_status webCmd :</code><br/>
 
-<p><em>If requested, fhem answers content of GAD refVal to GAD temp, answer nothing to GAD humidity. Both refVal and temp <b>must</b> have the same dpt-code (e.g dpt9 in this example), else garbage will be returned!:</em></p>
+<p><em>If requested, fhem answers content of GAD refVal to GAD temp, answer nothing to GAD humidity. Both refVal and temp <b>must</b> 
+have the same dpt-code (e.g dpt9 in this example), else garbage will be returned!:</em></p>
 <code>define demo KNX 1/0/30:dpt9.001:temp 1/0/31:dpt9.001:humidity 1/0/32:dpt9:refVal</code><br/>
 <code>attr demo putCmd {ReadingsNum("demo","refVal-get",0) if ($gadName =~ /temp/);}</code><br/>
 
@@ -2496,7 +2512,7 @@ The answer from the bus-device is not shown in the toolbox, but is treated like 
 <code>define newTest KNX 15/2/9:dpt5 15/2/3:dpt5 15/2/2:dpt1.001:power</code><br/>
 <code>attr newTest IODev knxd</code><br/>
 <code>attr newTest eventMap { usr=&gt;{'^getG1 (\d+)'=&gt;'g1 $1','^getG2 (\d+)'=&gt;'g2 $1','^An'=&gt;'power on','^Aus'=&gt;'power off'}, \</code><br/>
-<code style="padding-left: 20px;">fw=>{'^getG1 (\d+)'=&gt;'getG1','^getG2 (\d+)'=&gt;'getG2','^power-get'=&gt;'state'} \</code><br/>
+<code class="pad20l">fw=>{'^getG1 (\d+)'=&gt;'getG1','^getG2 (\d+)'=&gt;'getG2','^power-get'=&gt;'state'} \</code><br/>
 <code>}</code><br/>
 <code>attr newTest webCmd An:Aus::Label1:getG1::Label2:getG2</code><br/>
 <code>attr newTest widgetOverride getG1:slider,0,5,100 getG2:slider,0,5,100</code><br/>
@@ -2505,19 +2521,19 @@ The answer from the bus-device is not shown in the toolbox, but is treated like 
   <code>define testDev11 KNX 15/1/19:dpt1:steuern 15/1/20:dpt1:status 15/1/21:dpt5.001:dimmwert:nosuffix\</code><br/>
   <code>attr testDev11 IODev knxd</code><br/>
   <code>attr testDev11 eventMap {\</code><br/>
-  <code style="padding-left: 20px;">#Von Device nach Frontend sollte eigentlich bei einem Dezimalwert \</code><br/>
-  <code style="padding-left: 20px;">#das Reading status-get angezeigt werden. Geht aber nicht. Deshalb: stateCmd... \</code><br/>
-  <code style="padding-left: 20px;">dev=>{# '^(\d+)?.%$'=>ReadingsVal($dev,'status-get',"Zefix...")} \</code><br/>
-  <code style="padding-left: 20px;">#Frontend nach Device: Ersetze "An"/"Aus" durch "Steuern on/off". \</code><br/>
-  <code style="padding-left: 20px;">#Alle numerischen Werte vom Slider landen in "dimmwert" \</code><br/>
-  <code style="padding-left: 20px;">usr=>{'^An'=&gt;'steuern on', '^Aus'=&gt;'steuern off'}, \</code><br/>
-  <code style="padding-left: 20px;">#Tuning f$uuml;r die Detailseite...Zeige An/Aus richtig an \</code><br/>
-  <code style="padding-left: 20px;">fw=>{'^An'=&gt;'An', '^Aus'=&gt;'Aus'} \</code><br/>
-  <code style="padding-left: 20px;">}</code><br/>
+  <code class="pad20l">#Von Device nach Frontend sollte eigentlich bei einem Dezimalwert \</code><br/>
+  <code class="pad20l">#das Reading status-get angezeigt werden. Geht aber nicht. Deshalb: stateCmd... \</code><br/>
+  <code class="pad20l">dev=>{# '^(\d+)?.%$'=>ReadingsVal($dev,'status-get',"Zefix...")} \</code><br/>
+  <code class="pad20l">#Frontend nach Device: Ersetze "An"/"Aus" durch "Steuern on/off". \</code><br/>
+  <code class="pad20l">#Alle numerischen Werte vom Slider landen in "dimmwert" \</code><br/>
+  <code class="pad20l">usr=>{'^An'=&gt;'steuern on', '^Aus'=&gt;'steuern off'}, \</code><br/>
+  <code class="pad20l">#Tuning f$uuml;r die Detailseite...Zeige An/Aus richtig an \</code><br/>
+  <code class="pad20l">fw=>{'^An'=&gt;'An', '^Aus'=&gt;'Aus'} \</code><br/>
+  <code class="pad20l">}</code><br/>
   <code>attr testDev11 stateRegex /steuern-[sg]et:/steuern-/ /status-get:/status-/</code><br/>
   <code>attr testDev11 stateCmd {\</code><br/>
-  <code style="padding-left: 20px;">if ($state =~ m/dimmwert:/i) {'status-' . ReadingsVal($name,"status-get","")}\</code><br/>
-  <code style="padding-left: 20px;">else {return $state}\</code><br/>
+  <code class="pad20l">if ($state =~ m/dimmwert:/i) {'status-' . ReadingsVal($name,"status-get","")}\</code><br/>
+  <code class="pad20l">else {return $state}\</code><br/>
   <code>}</code><br/>
   <code>attr testDev11 devStateIcon status-on:general_an:Aus status-off:general_aus:Ein steuern.*:hourglass:Aus</code><br/>
   <code>#Dimmwert muss ein reales reading sein. Kann auch ...-get sein, wenn</code><br/>
@@ -2532,13 +2548,13 @@ Problem: the Bus-device send's and expects values 0,31,63,95,127,159,191,223,255
 define testStufen KNX 0/4/2:dpt5:StufeIst:get 0/4/7:dpt5:StufeSoll:set<br />
 attr testStufen eventMap { usr => {'^Stufe.(\d)$' => '".sprintf("StufeSoll %d",$1*32 -1)."' }, fw => {'^Stufe.(\d)$' => 'Stufe'} }<br />
 attr testStufen stateCmd {if ($gadName =~ 'Stufe(Ist|Soll)') { \</code><br />
-  <code style="padding-left: 40px;">my $newval = int(($state +1) / 32); \</code><br />
-  <code style="padding-left: 40px;">#Log3 $name,1, "StateCmd2: $name $gadName Stufe$1 $state -> $newval"; \</code><br />
-  <code style="padding-left: 40px;">fhem "sleep 0.1;setreading $name Stufe $newval"; \</code><br />
-  <code style="padding-left: 40px;">OldValue($name); \</code><br />
-  <code style="padding-left: 20px;">} else { \</code><br /> 
-  <code style="padding-left: 40px;">$state; \</code><br />
-  <code style="padding-left: 20px;">} \</code><br />
+  <code class="pad40l">my $newval = int(($state +1) / 32); \</code><br />
+  <code class="pad40l">#Log3 $name,1, "StateCmd2: $name $gadName Stufe$1 $state -> $newval"; \</code><br />
+  <code class="pad40l">fhem "sleep 0.1;setreading $name Stufe $newval"; \</code><br />
+  <code class="pad40l">OldValue($name); \</code><br />
+  <code class="pad20l">} else { \</code><br /> 
+  <code class="pad40l">$state; \</code><br />
+  <code class="pad20l">} \</code><br />
 <code>}<br />
 attr testStufen widgetOverride Stufe:slider,0,1,8<br />
 </code><br />
