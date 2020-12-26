@@ -1,22 +1,26 @@
 *** changes to 10_KNX.pm: for details, refer to:
-       https://github.com/erw111n/FHEM-KNX/blob/main/updateHistory.txt
- - change: 20201202 rework etlicher dpt1.subtypen: 
-     betrifft: dpt1.004-dpt1.007,dpt1.011-dpt1.018,dpt1.020-dpt1.023
-     es wird jetzt der Text lt. KNX-standard verwendet.
-     das kann evtl. inkompatibilitäten für notifies, doif's,
-     readingsproxy, ... definitionen haben, bitte um check bzw. 
-     anpassung und test!
-     z.B. wird ein dpt1.023 jetzt als <b>move_up_down</b> / 
-     <b>move_and_step_mode</b> dargestellt, bisher on/off.
-     Alle Texe mit mehr als einem Wort sind mittels '_' verbunden, 
-     sonst funktioniert das FHEM-WEB pulldown nicht! 
-     z.B: no_action / reset
-   dpt6.010 neu - entspricht exakt dpt6
-   putCmd funktioniert auf allen Definitions-optionen, 
-     also set/get/listenonly, und auch wenn keine option angegeben.
-     Beispiel dazu in der commandRef.
-   dpt19 complete rework, bei set werden auch Wochentag, Sommerzeit 
-     und die entsprechenden flags korrekt gesetzt.
-   docu: dpt's & common attributes jetzt 2-spaltig
-- change: 20201207 PBP changes, fix dpt16
+*** https://github.com/erw111n/FHEM-KNX/blob/main/updateHistory.txt
+- change: 20201223 new attr disable, removed 'use SetExtensions', 
+      add dpt2.000, rework set cmd and DbLogSplit, add Eversion-string
+	  fix docu to comply with checkin rules (commanref_join.pl)
 - change: 20201210 docu only: add dpt16 example, fix indent
+- change: 20201207 PBP changes, fix dpt16
+- change: 20201202 rework etlicher dpt1.subtypen: 
+      betrifft: dpt1.004-dpt1.007,dpt1.011-dpt1.018,dpt1.020-dpt1.023
+      es wird jetzt der Text lt. KNX-standard verwendet.
+      das kann evtl. inkompatibilitäten für notifies, doif's,
+      readingsProxy, ... definitionen haben, bitte um check bzw. 
+      anpassung und test!
+      z.B. wird ein dpt1.023 jetzt als <b>move_up_down</b> / 
+      <b>move_and_step_mode</b> dargestellt, bisher on/off.
+      Alle Texe mit mehr als einem Wort sind mittels '_' verbunden, 
+      sonst funktioniert das FHEM-WEB pulldown nicht! 
+      z.B: no_action / reset
+    dpt6.010 neu - entspricht exakt dpt6
+    putCmd funktioniert auf allen Definitions-optionen, 
+      also set/get/listenonly, und auch wenn keine option angegeben.
+      Beispiel dazu in der commandRef.
+    dpt19 complete rework, bei set werden auch Wochentag, Sommerzeit 
+      und die entsprechenden flags korrekt gesetzt.
+    docu: dpt's & common attributes jetzt 2-spaltig
+*** end of changes ***
