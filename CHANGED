@@ -2,7 +2,7 @@
 *** https://github.com/erw111n/FHEM-KNX/blob/main/updateHistory.txt
 - change: 20201223 new attr disable, removed 'use SetExtensions', 
       add dpt2.000, rework set cmd and DbLogSplit, add Eversion-string
-	  fix docu to comply with checkin rules (commanref_join.pl)
+      fix docu to comply with checkin rules (commanref_join.pl)
 - change: 20201210 docu only: add dpt16 example, fix indent
 - change: 20201207 PBP changes, fix dpt16
 - change: 20201202 rework etlicher dpt1.subtypen: 
