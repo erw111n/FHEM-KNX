@@ -11,7 +11,7 @@
           z.B. wird ein dpt1.023 jetzt als <b>move_up_down</b> / 
           <b>move_and_step_mode</b> dargestellt, bisher on/off.
           Alle Texe mit mehr als einem Wort sind mittels '_' verbunden, 
-          sonsts funktioniert das FHEM-WEB pulldown nicht! 
+          sonst funktioniert das FHEM-WEB pulldown nicht! 
           z.B: no_action / reset
         dpt6.010 neu - entspricht exakt dpt6
         putCmd funktioniert auf allen Definitions-optionen, 
@@ -22,3 +22,13 @@
         docu: dpt's & common attributes jetzt 2-spaltig
 2020-12-07 fixed dpt16, start PBP changes
 2020-12-10 add docu example for dpt16, fix docu indent.
+2021-01-16 Version E04.20 add Evolution-version string, add dpt2.000 (JoeALLb),
+           correction to "unknow argument..."
+           new attr disable, simplify set-cmd logic, 
+           removed 'use SetExtensions', rework DbLogsplit logic
+           simplify define cmd. No functional changes, i hope...
+           PBP /perlcritic: now down to 12 Lines (from original 425) on
+             Level 3, most of them 'cascading if-elsif chain' or 'high
+             complexity score'. Still one severity 5, don't know how to fix 
+             that one.
+           Docu update  
