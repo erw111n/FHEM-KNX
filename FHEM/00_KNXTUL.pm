@@ -3,6 +3,8 @@
 #31.01.2019: Checked Message Format to prevent FHEM-Crash
 #13.03.2019: Let only normal (no System-Messages) pass to prevent Creating Fake-Devices
 ## MH  2021-01-28 rework KNXTUL_Parse - check received messages integrity   
+## MH  2021-02-03 fixed error in read (all incoming msgs marked as read....)
+
 
 package main;
 
@@ -243,17 +245,19 @@ sub KNXTUL_Read($)
 	$src = tul_addr2hex($src,$isGAaddr);
 	$dst = tul_addr2hex($dst,$dest_addrType);
 
-	my $acpi1 = $acpi & 0x03;
-	$acpi = ($acpi1 << 2) | (($data[0] & 0xC0) >> 6);
+#	my $acpi1 = $acpi & 0x03;
+#	$acpi = ($acpi1 << 2) | (($data[0] & 0xC0) >> 6);
+	$acpi = ((($acpi & 0x03) << 2) | (($data[0] & 0xC0) >> 6));
 
 	my @acpicodes = ('read','preply','write','invalid');
-	my $rwp = $acpicodes[$acpi1];
+#	my $rwp = $acpicodes[$acpi1];
+	my $rwp = $acpicodes[$acpi];
 	if (! defined($rwp)) { 
 		Log3($name,1,"KNXTUL_read: no valid acpi-code (read/reply/write) received, discard packet");
 		return '';
 	}
 
-	Log3 ($name, 5,"KNXTUL_read: src=$src - dst=$dst - destaddrType=$dest_addrType - hop_count=$hop_count - isGAaddr=$isGAaddr - RTcount=$RTcount - leng=$leng/" . scalar(@data) . " - R/W=$rwp - acpi=$acpi - data=" . sprintf("%02X",join('',@data)) );
+	Log3 ($name,4,"KNXTUL_read: src=$src - dst=$dst - destaddrType=$dest_addrType - hop_count=$hop_count - isGAaddr=$isGAaddr - RTcount=$RTcount - leng=$leng/" . scalar(@data) . " - R/W=$rwp - acpi=$acpi - data=" . sprintf("%02X",join('',@data)) );
 
 	if ($leng != scalar(@data)) {
 		Log3($name,1,"KNXTUL_read: Datalength not consistent ");
@@ -273,7 +277,6 @@ sub KNXTUL_Read($)
 #	foreach my $c (@data) {
 #		$outbuf .= sprintf ("%02x", $c);
 #	}
-
 
 	#place KNX-Message
 	Log3 $name, 5, "KNXTUL_Read outbuf: $outbuf";
