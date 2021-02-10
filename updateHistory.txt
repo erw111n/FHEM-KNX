@@ -32,3 +32,12 @@
              complexity score'. Still one severity 5, don't know how to fix 
              that one.
            Docu update  
+2021-02-10 Version E04.40 reworked dpt3 en- de-code, added disable also for KNX_parse,
+           reworked set & parse -> new sub KNX_SetReading
+           fix dpt16 empty string / full string length
+           autocreate: new devices will be default disabled during autocreate! - see cmdref
+           the Log msg "Unknown code xxxxx please help me" cannot be suppressed, would require a change in TUL/KNXTUL Module
+           "set xxx (on|off)-until hh:mm"  now works like "at xxx on-till-overnight hh:mm"
+           fixed toogle (current value)
+           additional PBP/perlcritic fixes
+           fixed ugly bug when doing defmod or copy (defptr not cleared!)
