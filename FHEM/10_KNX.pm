@@ -323,7 +323,7 @@ KNX_Define {
 	$hash->{GADTABLE} = {};
 
 	#delete all defptr entries for this device (defmod & copy problem) bug is still in SVN version! 09-02-2021
-	delete_defptr($hash) if ($init_done); # verify with: {PrintHash($modules{KNX}{defptr},3) } on FHEM-cmdline
+	KNX_delete_defptr($hash) if ($init_done); # verify with: {PrintHash($modules{KNX}{defptr},3) } on FHEM-cmdline
 	
 	#create groups and models, iterate through all possible args
 ####	for (my $i = 2; $i < $lastGroupDef; $i++) {
@@ -361,6 +361,7 @@ KNX_Define {
 			}
 		}
 
+		my $haveGadName = 0; #x1
 		if (@gadArgs) {
 			if ($gadArgs[0] =~ m/^$PAT_GAD_OPTIONS$/ix) { # no gadname given
 				unshift ( @gadArgs , 'dummy' ); # shift option up in array
@@ -370,6 +371,7 @@ KNX_Define {
 			}
 			else {
 				$gadName = $gadArgs[0];
+				$haveGadName = 1; #x1
 			}
 
 			$gadOption = $gadArgs[1] if(defined($gadArgs[1]) && $gadArgs[1] =~ m/$PAT_GAD_OPTIONS/ix);
@@ -411,7 +413,8 @@ KNX_Define {
 		my $rdNameSet = $gadName . $suffixSet;
 		my $rdNamePut = $gadName . $suffixPut;
 
-		if ($gadName =~ m/g[\d]+/ix) { #old syntax
+		if ($haveGadName == 0) {
+#x1		if ($gadName =~ m/g[\d]+/ix) { #old syntax
 			$rdNameGet = "getG" . $gadNo;
 			$rdNameSet = "setG" . $gadNo;
 			$rdNamePut = "putG" . $gadNo;
@@ -531,7 +534,6 @@ KNX_Undef { #PBP
 	
 	#remove hash-pointer from available devices-list
 	#parse through all valid GAD in this deive
-	delete_defptr($hash);
 ####	foreach my $gadCode (keys %{$hash->{GADTABLE}}) 
 ####	{
 ####		my $gadName = $hash->{GADTABLE}{$gadCode};
@@ -1146,13 +1148,13 @@ sub KNX_SetReadings {
 	return;
 }
 
-########## begin of privat functions ##########
+########## begin of private functions ##########
 
 # delete all defptr entries for this device
 # used in undefine & define (avoid defmod problem) 09-02-2021
 # calling param: $hash
 # return param:  none
-sub delete_defptr {
+sub KNX_delete_defptr {
 	my $hash = shift;
 	my $name = $hash->{NAME};
 
@@ -1171,8 +1173,7 @@ sub delete_defptr {
 	return;
 }
 
-#Private function to convert GAD from hex to readable version
-#############################
+# convert GAD from hex to readable version
 sub
 KNX_hexToName {
 	my $v = shift;
@@ -1187,7 +1188,7 @@ KNX_hexToName {
 	return $r;
 }
 
-#Private function to convert PHY from hex to readable version
+# convert PHY from hex to readable version
 #############################
 sub
 KNX_hexToName2 {
@@ -1210,8 +1211,7 @@ KNX_nameToHex {
 	return $r;
 }
 
-#Private function to clean input string according DPT
-#############################
+# clean input string according DPT
 sub
 KNX_checkAndClean {
 	my ($hash, $value, $gadName) = @_;
@@ -1231,7 +1231,7 @@ KNX_checkAndClean {
 
 	#trim whitespaces at the end
 	$value =~ s/^\s+|\s+$//gix;
-	$value .= ':00' if ($model eq 'dpt10' && $value =~ /^[\d]{2}:[\d]{2}$/gix); #MH compatibility with widgetoverride :time
+	$value .= ':00' if ($model eq 'dpt10' && $value =~ /^[\d]{2}:[\d]{2}$/gix); # compatibility with widgetoverride :time
 
 	#match against model pattern
 	my @tmp = ($value =~ m/$pattern/gix);
@@ -1257,8 +1257,7 @@ KNX_checkAndClean {
 }
 
 
-#Private function to replace state-values
-#############################
+# replace state-values Attribute: stateRegex
 sub
 KNX_replaceByRegex {
 	my ($regAttr, $prefix, $input) = @_;
@@ -1280,9 +1279,7 @@ KNX_replaceByRegex {
 #			my @regPair = split("\/", $regex);
 			my @regPair = split(/\//x, $regex);
 						
-			#skip if not at least 2 values supplied
-			#next if (int(@regPair < 2));
-###			next if (not defined($regPair[0]));
+			#skip if first part of regex not match readingName
 			next if ((not defined($regPair[0])) || ($regPair[0] eq q{}) || ($regPair[0] !~ /$prefix/ix));
 			
 			if (not defined ($regPair[1])) {
@@ -1302,8 +1299,7 @@ KNX_replaceByRegex {
 	return $retVal;
 }
 
-#Private function to limit numeric values. Valid directions: encode, decode
-#############################
+# limit numeric values. Valid directions: encode, decode
 sub
 KNX_limit {
 	my ($hash, $value, $gadName, $direction) = @_;
@@ -1356,8 +1352,7 @@ KNX_limit {
 }
 
 
-#Private function to encode KNX-Message according DPT
-#############################
+# process attributes stateCmd & putCmd
 sub
 KNX_eval {
 	my ($hash, $gadName, $state, $evalString) = @_;
@@ -1376,8 +1371,7 @@ KNX_eval {
 }
 
 
-#Private function to encode KNX-Message according DPT
-#############################
+# encode KNX-Message according DPT
 sub
 KNX_encodeByDpt {
 	my ($hash, $value, $gadName) = @_;
@@ -1573,9 +1567,9 @@ KNX_encodeByDpt {
 		#convert to hex-string
 		my $dat = unpack "H*", $numval;
 
-		$dat = '00' if ($value =~ /^$PAT_DPT16_CLR/x); #MH send a single blank if "clear line string" 
+		$dat = '00' if ($value =~ /^$PAT_DPT16_CLR/x); # send a single zero if "clear line string" 
 
-		#format for 14-byte-length and append leading zeros
+		#format for 14-byte-length and replace trailing blanks with zeros
 		$hexval = sprintf("00%-28s",$dat);
 		$hexval =~ s/\s/0/gx;
 	} 
@@ -1583,7 +1577,7 @@ KNX_encodeByDpt {
 	elsif ($code eq "dpt19") {
 		my $ts = time; # default or when "now" is given
 		# if no match we assume now and use current date/time
-		$ts = fhemTimeLocal($6, $5, $4, $1, $2-1, $3-1900) if ($value =~ m/^$PAT_DATE$PAT_DTSEP$PAT_TIME/x); #PBP
+		$ts = fhemTimeLocal($6, $5, $4, $1, $2-1, $3-1900) if ($value =~ m/^$PAT_DATE$PAT_DTSEP$PAT_TIME/x);
 		my ($secs,$mins,$hours,$mday,$mon,$year,$wday,$yday,$isdst) = localtime($ts); #PBP
 		$wday = 7 if ($wday eq "0"); # calculate offset for weekday
 		$hours += ($wday<<5); # add day of week
@@ -1619,8 +1613,7 @@ KNX_encodeByDpt {
 }
 
 
-#Private function to decode KNX-Message according DPT
-#############################
+# decode KNX-Message according DPT
 sub
 KNX_decodeByDpt {
 	my ($hash, $value, $gadName) = @_;
