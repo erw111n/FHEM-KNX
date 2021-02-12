@@ -41,3 +41,4 @@
            fixed toogle (current value)
            additional PBP/perlcritic fixes
            fixed ugly bug when doing defmod or copy (defptr not cleared!)
+2021-02-11 Version E04.41 fix for correct readingnames
