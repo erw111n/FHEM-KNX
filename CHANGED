@@ -1,3 +1,5 @@
+*** changes 00_KNXTUL.pm
+- change: 20210225 final changes to parse function
 *** changes to 10_KNX.pm: for details, refer to:
 *** https://github.com/erw111n/FHEM-KNX/blob/main/updateHistory.txt
 - change: 20201223 new attr disable, removed 'use SetExtensions', 

@@ -25,3 +25,6 @@
         dpt19 complete rework, bei set werden auch Wochentag, Sommerzeit 
           und die entsprechenden flags korrekt gesetzt.
         docu: dpt's & common attributes jetzt 2-spaltig
+### Update History for 00_KNXTUL.pm
+################################
+2021-02-25 final changes to parse function

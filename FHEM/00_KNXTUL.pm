@@ -5,7 +5,6 @@
 ## MH  2021-01-28 rework KNXTUL_Parse - check received messages integrity   
 ## MH  2021-02-03 fixed error in read (all incoming msgs marked as read....)
 
-
 package main;
 
 use strict;
@@ -57,7 +56,8 @@ sub KNXTUL_Initialize($)
 					   "showtime:1,0 " .
 					   "verbose:0,1,2,3,4,5 ";
 	$hash->{ShutdownFn} = "KNXTUL_Shutdown";
-
+	$hash->{Clients} = "KNX";
+	$hash->{MatchList} = { "1:KNX" => "^C.*" };
 }
 
 #####################################
@@ -87,7 +87,7 @@ sub KNXTUL_Define($$)
     $hash->{UseDirectConnection}=1;
   }
 	$hash->{Port} = 3671;
-	$hash->{Clients} = "KNX";
+#	$hash->{Clients} = "KNX";
 
 	my $ret = KNXTUL_OpenDev($hash, 0);
 	return $ret;
@@ -115,6 +115,7 @@ sub KNXTUL_OpenDev($$)
   } else {
     $conn = IO::Socket::Multicast->new(Proto=>'udp',LocalPort=>$port,LocalAddr=>$host,ReuseAddr=>1);
     $conn->mcast_add($host) || Log3 ($name, 3,"Can't set group: $host");
+    $conn->mcast_loopback(0); ##MH
     $conn->mcast_dest($host.":".$port);
   }
 	if($conn)
@@ -164,11 +165,11 @@ sub KNXTUL_Read($)
 
 	my $buf = q{};
 
-	Log3($name,5,"KNXTUL_read: started");
+	Log3($name,5,'KNXTUL_read: started');
 	my $len=$hash->{CD}->recv($buf, 1024);
 
 	if( !defined($len) || !$len ) {
-		Log3($name,1,"KNXTUL_read: no data - disconnect");
+		Log3($name,1, 'KNXTUL_read: no data - disconnect');
 		KNXTUL_Disconnected($hash);
 		return '';
 	}
@@ -182,17 +183,17 @@ sub KNXTUL_Read($)
 	# header format: 0x06 - header size / 0x10 - KNXNET-IPVersion / 0x0530 - Routing Indicator / 0xYYYY - Header size + size of cEMIFrame 
 	my ($header_size, $header_version, $header_routingI, $total_length) = unpack("ccnn",$buf);
 
-	Log3($name,5,"KNXTUL_read: header -size= " . sprintf("%02x",$header_size) . ", -version= " . sprintf("%02x",$header_version) . ", -routing= " . sprintf("%04x",$header_routingI) . ", TotalLength= $total_length \(dezimal\)" ); 
+	Log3($name,5, 'KNXTUL_read: header -size= ' . sprintf("%02x",$header_size) . ', -version= ' . sprintf("%02x",$header_version) . ', -routing= ' . sprintf("%04x",$header_routingI) . ", TotalLength= $total_length \(dezimal\)" ); 
 
 	if (($header_size != 0x06 || $header_version != 0x10 ) ) {
-		Log3($name,1,"KNXTUL_read: invalid header size or version");
+		Log3($name,4, 'KNXTUL_read: invalid header size or version');
 		$hash->{CHUNK} = undef; # delete all we have so far 
 #		KNXTUL_Disconnected($hash); #?
 		return '';
 	}
 
 	if (length($buf) < $total_length) {  #  6 Byte header + min 11 Byte data
-		Log3($name,4, "KNXTUL_read: still waiting for complete packet \(short packet length\)");
+		Log3($name,4, 'KNXTUL_read: still waiting for complete packet (short packet length)');
 		$hash->{CHUNK} = $buf; # still not enough
 		return '';
 	}
@@ -207,12 +208,12 @@ sub KNXTUL_Read($)
 	}
 	elsif ($header_routingI == 0x0531) {
 		# routing Lost Message
-		Log3($name,3, "KNXTUL_read: a routing-lost packet was received !!! - Problems with bus or KNX-router ???");
+		Log3($name,3, 'KNXTUL_read: a routing-lost packet was received !!! - Problems with bus or KNX-router ???');
 		#shall we set refused here ? 
 		return '';
 	}
 	else {
-		Log3($name,4, "KNXTUL_read: a packet with unsupported service type " . sprintf("%04x",$header_routingI) . " was received. - discarded");
+		Log3($name,4, 'KNXTUL_read: a packet with unsupported service type ' . sprintf("%04x",$header_routingI) . ' was received. - discarded');
 		return '';
 	}
 
@@ -223,44 +224,48 @@ sub KNXTUL_Read($)
 ###	KNXTUL_Parse($hash,$buf);
 
 	my ($idval, $ctrlbyte1, $ctrlbyte2, $src, $dst, $tcf, $acpi, @data) = unpack("x" . $header_size . "nCCnnCCC*",$buf);
-	Log3($name,5,"KNXTUL_read: frame -idval= " . sprintf("%04x",$idval) . ", ctrl1= " . sprintf("%02x",$ctrlbyte1) . ", ctrl2= " . sprintf("%02x",$ctrlbyte2) .", src= " . sprintf("%04x",$src) .", dst= " . sprintf("%04x",$dst) . ", tcf= " . sprintf("%02x",$tcf) . ", acpi= " . sprintf("%02x",$acpi) . ", data= " . sprintf("%02X",join('',@data)));  
+	Log3($name,5,"KNXTUL_read: frame -idval= " . sprintf("%04x",$idval) . ", ctrl1= " . sprintf("%02x",$ctrlbyte1) . ", ctrl2= " . sprintf("%02x",$ctrlbyte2) .", src= " . sprintf("%04x",$src) .", dst= " . sprintf("%04x",$dst) . ", tcf= " . sprintf("%02x",$tcf) . ", acpi= " . sprintf("%02x",$acpi) . ", data= " . sprintf('%02x' x scalar(@data),@data) );  
 
 	if ($idval != 0x2900) { 
 		Log3($name,1,'KNXTUL_read: wrong idval ' . sprintf("%04x",$idval) . ', discard packet');
 		return '';
 	}
 
-	if ($ctrlbyte1 != 0xBC) { # shall we check on 0x80 only ? (standard frame)
-		Log3($name,1,'KNXTUL_read: wrong ctrlbyte' . sprintf("%02x",$ctrlbyte1)  . ', discard packet');
+	if (($ctrlbyte1 & 0xF0) != 0xB0) { # standard frame/no repeat/broadcast - see 03_06_03 EMI_IMI specs
+#	if ($ctrlbyte1 != 0xBC) { # shall we check on 0x80 only ? (standard frame) see 03_06_03 EMI_IMI specs
+		Log3($name,1,'KNXTUL_read: wrong ctrlbyte1' . sprintf("%02x",$ctrlbyte1)  . ', discard packet');
 		return '';
 	}
+
+	my $prio = ($ctrlbyte1 & 0x0C) >>2; # priority
 
 	my $dest_addrType = ($ctrlbyte2 & 0x80) >> 7; # MSB  0 = indiv / 1 = group 
 	my $hop_count = ($ctrlbyte2 & 0x70) >> 4; # bits 6-4      
 
-	my $leng = ($tcf & 0x0F); #?
-	my $isGAaddr = ($tcf & 0x80) >> 7;
-	my $RTcount = ($tcf & 0x70) >> 4; #?
+	my $leng = $tcf; # number of NPDU octets, TPCI octet not included!
+#	my $leng = ($tcf & 0x0F); #?
+#	my $isGAaddr = ($tcf & 0x80) >> 7; #?
+#	my $RTcount = ($tcf & 0x70) >> 4; #?
 
-	$src = tul_addr2hex($src,$isGAaddr);
+	$src = tul_addr2hex($src,0); # always a phy-address
 	$dst = tul_addr2hex($dst,$dest_addrType);
 
-#	my $acpi1 = $acpi & 0x03;
-#	$acpi = ($acpi1 << 2) | (($data[0] & 0xC0) >> 6);
-	$acpi = ((($acpi & 0x03) << 2) | (($data[0] & 0xC0) >> 6));
+	my $acpi1 = ($data[0] & 0xC0) >> 6;
+	$acpi = ((($acpi & 0x03) << 2) | $acpi1);
+#	$acpi = ((($acpi & 0x03) << 2) | (($data[0] & 0xC0) >> 6));
 
 	my @acpicodes = ('read','preply','write','invalid');
-#	my $rwp = $acpicodes[$acpi1];
-	my $rwp = $acpicodes[$acpi];
-	if (! defined($rwp)) { 
-		Log3($name,1,"KNXTUL_read: no valid acpi-code (read/reply/write) received, discard packet");
+	my $rwp = $acpicodes[$acpi1];
+#	my $rwp = $acpicodes[$acpi];
+	if ((! defined($rwp)) || ($rwp eq 'invalid')) { 
+		Log3($name,1,'KNXTUL_read: no valid acpi-code (read/reply/write) received, discard packet');
 		return '';
 	}
 
-	Log3 ($name,4,"KNXTUL_read: src=$src - dst=$dst - destaddrType=$dest_addrType - hop_count=$hop_count - isGAaddr=$isGAaddr - RTcount=$RTcount - leng=$leng/" . scalar(@data) . " - R/W=$rwp - acpi=$acpi - data=" . sprintf("%02X",join('',@data)) );
+	Log3 ($name,4,"KNXTUL_read: src=$src - dst=$dst - destaddrType=$dest_addrType  - prio=$prio - hop_count=$hop_count - leng=$leng/" . scalar(@data) . " - R/W=$rwp - acpi=$acpi - data=" . sprintf('%02x' x scalar(@data),@data) );
 
 	if ($leng != scalar(@data)) {
-		Log3($name,1,"KNXTUL_read: Datalength not consistent ");
+		Log3($name,1, 'KNXTUL_read: Datalength not consistent');
 		return '';
 	}
 
@@ -511,7 +516,7 @@ sub KNXTUL_Disconnected($)
 sub KNXTUL_Attr(@)
 {
 	my ($cmd,$name,$aName,$aVal) = @_;
-
+	$aVal = 'undefined' if (! defined($aVal));
 	Log3 ($name, 5, "changing value, ATTR: $aName, VALUE: $aVal");
 
 	return undef;
