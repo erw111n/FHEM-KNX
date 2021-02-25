@@ -247,8 +247,8 @@ sub KNXTUL_Read($)
 #	my $isGAaddr = ($tcf & 0x80) >> 7; #?
 #	my $RTcount = ($tcf & 0x70) >> 4; #?
 
-	$src = tul_addr2hex($src,0); # always a phy-address
-	$dst = tul_addr2hex($dst,$dest_addrType);
+	$src = KNXTUL_addr2hex($src,0); # always a phy-address
+	$dst = KNXTUL_addr2hex($dst,$dest_addrType);
 
 	my $acpi1 = ($data[0] & 0xC0) >> 6;
 	$acpi = ((($acpi & 0x03) << 2) | $acpi1);
