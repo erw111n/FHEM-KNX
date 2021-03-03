@@ -41,4 +41,37 @@
            fixed toogle (current value)
            additional PBP/perlcritic fixes
            fixed ugly bug when doing defmod or copy (defptr not cleared!)
-2021-02-11 Version E04.41 fix for correct readingnames
+2021-02-11 Version E04.41 fix for correct readingnames		   
+2021-02-25 Version E04.43 
+           1) fix: en-de-code dpt 6,8,13
+           2) fix autocreate- unknown code.. 
+              ich hab autocreateThreshold wieder aus dem Modul entfernt, nachdem das als Attribute im autocreate modul vom user selbst definiert
+              werden kann, und zwar auch KNX spezifisch! Z.b: "attr autocreate autocreateThreshold KNX_.*:2:10" 
+              -übersetzt: definiere ein KNX_xxyyzzz device falls binnen 10 sekunden 2 Messages mit der gleichen GA-addr. vom Bus ankommen.
+              unknown codes sollten jetzt keine mehr vorkommen!
+              Die devices sind default disabled, es muss ein richtiger dpt-typ manuell definiert werden.
+           3) Set-readings / get-readings 
+              Ich habe versucht zu trennen: die Funktion der set/get/listenonly option (verhindern von set- od. get-cmd) von der Logik wann set- / get-readings gesetzt werden. 
+              set-readings werden NUR MEHR gesetzt, sobald ein FHEM set-cmd ausgeführt wird. 
+              bisher: wurde das set reading auch gesetzt, fall die "set-option" definiert war und eine Msg vom Bus kam..
+              (es gab kein get-reading wenn die "set-option" definiert war)
+              get-readings werden für ALLE messages gesetzt, die vom Bus kommen (unabhängig von set-option).
+              - das kann bei unterschiedlichen Implementationen durchaus zu Unterschieden führen: (das ist zwar nicht neu, aber kann fürs debuggen nützlich sein!)
+              - Folgende Varianten hab ich bisher festellen können:
+              - a) ein FHEM-set cmd erzeugt KEIN get-reading. Das wäre der "Normalfall"
+              - b) ein FHEM-set cmd erzeugt EIN get-reading, zusätzlich zum set-reading.
+                  Mögliche Ursachen: 
+                  b1) der IP- Layer echoed die gesendete FHEM-set msg. (Trifft für KNXTUL multicast zu)
+                  b2) in der ETS (bzw. im KNX-device) ist für diese GA das Flag update/aktualisieren gesetzt.
+                  b3) sehr alte KNXD-Versionen machen das auch auf Tunnel-connections.
+                  Was zutrifft kann man evtl. erkennen, wenn man im event-monitor auf last-sender schaut...
+              - Mehrfache get-readings (für dieselbe GA) kommen vor:
+                a) Falls am KNX-TP1 ein resend passiert.
+                b) TASMOTA-KNX - schickt jede msg 3mal, falls in den KNX-definitionen im Tasmota "Communication Enhancement" eingestellt ist.
+                c) wenn es in einem LAN mehrere KNXD's mit "S" option bzw. KNX Router gibt, dann entstehen möglicherweise loops.. 
+                d) Falls gleichzeitig ein TUL UND ein KNXTUL Modul definiert ist! Verhalten ist nicht deterministisch, manchmal kommen die msgs über beide Interfaces, manchmal nur über eins von beiden...
+              Lt. KNX-specs darf es KEINE 2 Pfade zwischen 2 Geräten geben! (so hab ich es zumindest verstanden)
+              Falls jetzt jemand verwirrt ist, hab ich Verständnis dafür... Falls ihr die unterscheidung set-/get-reading nicht für weitere Logik braucht, empfehle ich die Verwendung der "noSuffix-option".
+           4) cmd-ref: umstellung von "<a name=" nach "<a id=" siehe:https://forum.fhem.de/index.php/topic,118915.msg1135123.html#msg1135123
+           5) Neu: Attribute KNX_toggle ist in der cmdref im Detail beschrieben.
+		   
