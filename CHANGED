@@ -1,5 +1,11 @@
 *** changes to 10_KNX.pm: for details, refer to:
 *** https://github.com/erw111n/FHEM-KNX/blob/main/updateHistory.txt
+- change: 20210225 Version E04.43
+      change dpts: 6,8,13 en-/de-code
+      readings: a write from bus updates always the "get" reading, independent of option set !!!
+      a set-cmd always updates the "set-reading"
+      fix autocreate- unknown code..
+- new: add KNX_toggle Attribute for toogle cmd - see cmdref
 - change: 20210210 Version E04.40 
       reworked dpt3 en- de-code, added disable also for KNX_parse,
       reworked set & parse -> new sub KNX_SetReading
@@ -9,9 +15,4 @@
       fixed toogle (current value)
       additional PBP/perlcritic fixes
       fixed ugly bug when doing defmod or copy (defptr not cleared!)
-- change: 20210116 Version E04.20 
-      correction to "unknow argument...",
-      simplify set & define logic, removed 'use SetExtensions', 
-      rework DbLogsplit logic, update docu
-- new: 20210116 new attr disable, add Evolution-version string, add dpt2.000
 *** end of changes ***
