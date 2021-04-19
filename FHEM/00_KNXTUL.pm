@@ -4,6 +4,8 @@
 #13.03.2019: Let only normal (no System-Messages) pass to prevent Creating Fake-Devices
 ## MH  2021-01-28 rework KNXTUL_Parse - check received messages integrity   
 ## MH  2021-02-03 fixed error in read (all incoming msgs marked as read....)
+## MH  2021-04-04 add Fingerprint-Fn 
+##                implemented FIFO 
 
 package main;
 
@@ -51,9 +53,13 @@ sub KNXTUL_Initialize($)
 	$hash->{StateFn} = "KNXTUL_SetState";
 	$hash->{AttrFn}  = "KNXTUL_Attr";
 
+	$hash->{FingerprintFn} = "KNXTUL_FingerPrint";
+
 	$hash->{AttrList}= "do_not_notify:1,0 " .
 					   "dummy:1,0 " .
+					   "disable:1,0 " .
 					   "showtime:1,0 " .
+					   "KNX_FIFO:1 " .
 					   "verbose:0,1,2,3,4,5 ";
 	$hash->{ShutdownFn} = "KNXTUL_Shutdown";
 	$hash->{Clients} = "KNX";
@@ -87,7 +93,8 @@ sub KNXTUL_Define($$)
     $hash->{UseDirectConnection}=1;
   }
 	$hash->{Port} = 3671;
-#	$hash->{Clients} = "KNX";
+
+	$hash->{FIFO} = q{}; # read fifo
 
 	my $ret = KNXTUL_OpenDev($hash, 0);
 	return $ret;
@@ -101,14 +108,15 @@ sub KNXTUL_OpenDev($$)
 	my $host = $hash->{IPAddress};
 	my $port = $hash->{Port};
   my $UseDirectConnection = $hash->{UseDirectConnection};
-	$hash->{PARTIAL} = "";
+#	$hash->{PARTIAL} = "";
 	Log 3, "KNXTUL opening $name" if(!$reopen);
 
 	# This part is called every time the timeout (5sec) is expired _OR_
 	# somebody is communicating over another TCP connection. As the connect
 	# for non-existent devices has a delay of 3 sec, we are sitting all the
 	# time in this connect. NEXT_OPEN tries to avoid this problem.
-	return if($hash->{NEXT_OPEN} && time() < $hash->{NEXT_OPEN});
+	return if(exists($hash->{NEXT_OPEN}) && ($hash->{NEXT_OPEN} + time()) < $hash->{NEXT_OPEN});
+#	return if(($hash->{NEXT_OPEN} + time()) < $hash->{NEXT_OPEN});
   my $conn=0;
   if ($UseDirectConnection) {
     $conn = new IO::Socket::INET(PeerHost => $host,PeerPort=>$port,Proto=>'udp') or Log3($name,0,"Connection to ".$host." can't be established");
@@ -352,7 +360,34 @@ sub KNXTUL_DoInit($)
 #####################################
 sub KNXTUL_Parse($$$$$)
 {
-	my ($hash, $iohash, $name, $rmsg, $initstr) = @_;
+#### insert fifo begin
+	my ($hash, $iohash, $name, $outbuf, $initstr) = @_;
+#	my ($hash, $iohash, $name, $rmsg, $initstr) = @_;
+
+#	my @que = ();
+	if (defined(AttrVal($name,'KNX_FIFO',undef))) {
+#		@que = @{$hash->{FIFO}} if (defined($hash->{FIFO}) && ($hash->{FIFO} ne q{}));
+#		push (@que,$outbuf);
+#		$hash->{FIFO} = \@que;
+		KNXTUL_processFIFO($hash, $outbuf);
+		return; # return to main loop via InternalTimer
+	}
+	else {
+		$hash->{FIFOMSG} = $outbuf;
+	}
+	return KNXTUL_parse2($hash);
+}
+
+### called from FIFO TIMER or direct if FIFO disabled
+sub KNXTUL_parse2 {
+#	my ($hash, $outbuf ) = ($_[0]->{h}, $_[0]->{m});
+	my $hash = shift;
+	my $rmsg = $hash->{FIFOMSG};
+#	my $buf = $hash->{FIFOMSG};
+	my $name = $hash->{NAME};
+#	my $outbuf = $buf;
+	$hash->{FIFOTIMER} = 0;
+#### end insert fifo
 
 	# there is nothing specal to do at the moment.
 	# just dispatch
@@ -364,9 +399,44 @@ sub KNXTUL_Parse($$$$$)
 	my %addvals = (RAWMSG => $rmsg);
 
 	Dispatch($hash, $dmsg, \%addvals);
-#	Dispatch($hash, $dmsg, \%addvals,1); #MH dont Log "unknown code xxx pls help me"
+
+	KNXTUL_processFIFO($hash, undef) if (defined($hash->{FIFO}) && ($hash->{FIFO} ne q{})); # FIFO
+	return;
 }
 
+#####################################
+### fetch msgs from FIFO and call dispatch
+sub KNXTUL_processFIFO {
+	my $hash = shift;
+	my $msg = shift; # undef if called from parse2
+
+	my @que = ();
+	@que = @{$hash->{FIFO}} if (defined($hash->{FIFO}) && ($hash->{FIFO} ne q{}));
+	push (@que,$msg) if (defined($msg));
+
+	if (($hash->{FIFOTIMER}  == 0) && (scalar(@que) > 0)) { # process timer is not running & fifo not empty
+		$hash->{FIFOMSG} = shift (@que);
+#		$hash->{FIFO} = \@que;
+		$hash->{FIFOTIMER} = 1;
+		Log3 $hash->{NAME}, 4, 'KNXTUL_processFIFO : ' . $hash->{FIFOMSG} . ' msgNr='  . scalar(@que);
+#		InternalTimer(0, 'KNXTUL_dispatch2', {h => $hash, m => $msgpiece});
+#testing delay		InternalTimer(gettimeofday() + 0.1, 'KNXTUL_dispatch2', $hash);
+		InternalTimer(0, 'KNXTUL_parse2', $hash);
+	}
+	$hash->{FIFO} = \@que;
+	return;
+}
+
+#####################################
+### check for duplicate msgs
+sub KNXTUL_FingerPrint {
+	my $ioname = shift;
+	my $buf  = shift;
+	substr( $buf, 1, 5, '.....' ); # ignore src addr
+	Log3 $ioname, 5, 'KNXTUL_Fingerprint: ' . $buf;
+#	return ( $ioname, $buf ); # ignore src addr
+	return ( q{}, $buf ); # ignore ioname & src addr
+}
 
 #####################################
 sub KNXTUL_Ready($)
@@ -381,7 +451,7 @@ sub KNXTUL_Write($$$)
 	my ($hash,$fn,$msg) = @_;
 	return if(!$hash);
 	my $name = $hash->{NAME};
-  Log3($name,5,"KNXTUL - Write started");
+	Log3($name,5,"KNXTUL - Write started");
 	return if(!defined($fn));
 
 	# Discard message if TUL is disconnected
@@ -459,35 +529,42 @@ sub KNXTUL_sendGroup($$)
   	my $host = $hash->{IPAddress};
   	my $port = $hash->{Port};
   	my $size = length($str);
-	my $completemsg=pack("H*","06100530").pack("n",$size+12).pack("H*","2900BCD0").pack("n",$size).$str;
-  	Log3 ($hash->{NAME},5,"KNXTUL_sendRequest: ".$host.":".$port." msg: ".unpack("H*",$completemsg). "\n");
-  	return undef unless $hash->{CD}->mcast_send($completemsg,$host.":".$port);
+	my $completemsg=pack("H*","06100530").pack("n",$size+12).pack("H*","2900BCE0").pack("n",$size).$str;
+#	my $completemsg=pack("H*","06100530").pack("n",$size+12).pack("H*","2900BCD0").pack("n",$size).$str;
+  	Log3 ($hash->{NAME},5,"KNXTUL_sendRequest: ".$host.":".$port." msg: ".unpack("H*",$completemsg));
+#MH	
+	if ($hash->{UseDirectConnection} == 0) { # multicast
+		return undef unless $hash->{CD}->mcast_send($completemsg,$host.":".$port);
+	}
+	else {
+		return undef unless $hash->{CD}->write($completemsg);
+	}
     return 1;
 }
-
 
 ########################
 sub KNXTUL_CloseDev($)
 {
 	my ($hash) = @_;
 	my $name = $hash->{NAME};
-	my $dev = $hash->{DeviceName};
+#MH	my $dev = $hash->{DeviceName};
 
-	return if(!$dev);
+#MH	return if(!$dev);
 
 	if($hash->{FD})
 	{
-		$hash->{FD}->close();
-		delete($hash->{FD});
+		$hash->{CD}->close();
+		delete($hash->{CD});
 	}
-	elsif($hash->{USBDev})
-	{
-		$hash->{USBDev}->close() ;
-		delete($hash->{USBDev});
-	}
+#MH	elsif($hash->{USBDev})
+#	{
+#		$hash->{USBDev}->close() ;
+#		delete($hash->{USBDev});
+#	}
 
-	delete($selectlist{"$name.$dev"});
-	delete($readyfnlist{"$name.$dev"});
+	$hash->{"${name}_MSGCNT"} = 0;
+	delete($selectlist{"$name"});
+	delete($readyfnlist{"$name"});
 	delete($hash->{FD});
 }
 
@@ -679,13 +756,16 @@ sub KNXTUL_encode_eibd($$)
   </ul>
   <br>
 
-  <a name="TULattr"></a>
+  <a name="KNXTULattr"></a>
   <b>Attributes</b>
   <ul>
     <li><a href="#do_not_notify">do_not_notify</a></li><br>
     <li><a href="#attrdummy">dummy</a></li><br>
     <li><a href="#showtime">showtime</a></li><br>
     <li><a href="#verbose">verbose</a></li><br>
+    <li><a id="KNXIO-attr-KNXTUL_FIFO"></a><b>KNX_FIFO</b> -
+        Set this attr to 1 to enable a receive buffer for incoming messages. The KNX-messages will not processed faster,
+        but the overall responsiveness and latency of FHEM benefit from this setting.</li>
   </ul>
   <br>
 </ul>
