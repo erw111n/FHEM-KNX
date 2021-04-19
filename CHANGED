@@ -1,18 +1,13 @@
 *** changes to 10_KNX.pm: for details, refer to:
 *** https://github.com/erw111n/FHEM-KNX/blob/main/updateHistory.txt
-- change: 20210225 Version E04.43
-      change dpts: 6,8,13 en-/de-code
-      readings: a write from bus updates always the "get" reading, independent of option set !!!
-      a set-cmd always updates the "set-reading"
-      fix autocreate- unknown code..
-- new: add KNX_toggle Attribute for toogle cmd - see cmdref
-- change: 20210210 Version E04.40 
-      reworked dpt3 en- de-code, added disable also for KNX_parse,
-      reworked set & parse -> new sub KNX_SetReading
-      fix dpt16 empty string / full string length
-      autocreate: new devices will be default disabled! - see cmdref
-      "set xxx (on|off)-until hh:mm"  now works like "at xxx on-till-overnight hh:mm"
-      fixed toogle (current value)
-      additional PBP/perlcritic fixes
-      fixed ugly bug when doing defmod or copy (defptr not cleared!)
+20210419 Version E04.52
+- change: own package: FHEM::KNX
+      replaced ok-dialog on get-cmd by "err-msg"
+      replace eval by AnalyzePerlCommand
+      docu correction
+      fixed KNX_replaceByRegex
+      fix IsDisabled when state = inactive
+      modified dpt patterns algo
+      fix DbLog_split
+- new: added FingerPrintFn
 *** end of changes ***

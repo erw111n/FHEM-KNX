@@ -74,4 +74,13 @@
               Falls jetzt jemand verwirrt ist, hab ich Verständnis dafür... Falls ihr die unterscheidung set-/get-reading nicht für weitere Logik braucht, empfehle ich die Verwendung der "noSuffix-option".
            4) cmd-ref: umstellung von "<a name=" nach "<a id=" siehe:https://forum.fhem.de/index.php/topic,118915.msg1135123.html#msg1135123
            5) Neu: Attribute KNX_toggle ist in der cmdref im Detail beschrieben.
-		   
+20210419 Version E04.52
+    - change: own package FHEM::KNX
+      replaced ok-dialog on get-cmd by "err-msg"
+      replace eval by AnalyzePerlCommand
+      docu correction
+      fixed KNX_replaceByRegex
+      fix IsDisabled when state = inactive
+      modified dpt patterns algo
+      fix DbLog_split
+    - new: added FingerPrintFn
