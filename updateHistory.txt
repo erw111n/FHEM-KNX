@@ -84,3 +84,7 @@
       modified dpt patterns algo
       fix DbLog_split
     - new: added FingerPrintFn
+	
+20210426 revert to Version E04.43
+    Problems with E04.52 - see Forum
+

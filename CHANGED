@@ -1,5 +1,7 @@
 *** changes to 10_KNX.pm: for details, refer to:
 *** https://github.com/erw111n/FHEM-KNX/blob/main/updateHistory.txt
+20210426 revert to Version E04.43
+- problems with E04.53
 20210419 Version E04.52
 - change: own package: FHEM::KNX
       replaced ok-dialog on get-cmd by "err-msg"
