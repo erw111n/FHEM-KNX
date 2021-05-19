@@ -87,4 +87,11 @@
 	
 20210426 revert to Version E04.43
     Problems with E04.52 - see Forum
-
+20210517 Version 04.60
+-change: 50% of the changes of the unsucessful Vers. 04.52
+    IsDisabled when state = inactive
+    cleanup, replaced ok-dialog on get-cmd by "err-msg"
+    docu correction
+    fixed KNX_replaceByRegex
+    replace eval by AnalyzePerlCommand
+    added FingerPrintFn, fix DbLog_split
