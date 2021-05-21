@@ -1,5 +1,6 @@
 *** changes to 10_KNX.pm: for details, refer to:
 *** https://github.com/erw111n/FHEM-KNX/blob/main/updateHistory.txt
+20210521 Version 04.62 fix readingsnames "gx:...:nosuffix"
 20210517 Version 04.60
 -change: 50% of the changes of the unsucessful Vers. 04.52
         IsDisabled when state = inactive

@@ -95,3 +95,4 @@
     fixed KNX_replaceByRegex
     replace eval by AnalyzePerlCommand
     added FingerPrintFn, fix DbLog_split
+20210521 Version 04.62 fix readingsnames "gx:...:nosuffix"
