@@ -96,3 +96,8 @@
     replace eval by AnalyzePerlCommand
     added FingerPrintFn, fix DbLog_split
 20210521 Version 04.62 fix readingsnames "gx:...:nosuffix"
+20210817 Version 04.66 no mayor functional changes
+	own package FHEM::KNX
+	remove Fingerprint Function
+	new dpts: dpt7.600, dpt9.029, dpt9.030
+	

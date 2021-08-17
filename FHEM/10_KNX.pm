@@ -70,13 +70,20 @@
 #              added FingerPrintFn, fix DbLog_split  
 # MH  20210521 E04.62 DbLog_split replace regex by looks_like_number
 #              fix readingsnames "gx:...:nosuffix"
+# MH  202105xx E04.65 own Package FHEM:KNX
+# MH  20210803 E04.66 remove FingerPrintFn
+#              new dpt7.600, dpt9.029,dpt9.030  
 
 
-package main;
+#04.65 package main;
+package FHEM::KNX; ## no critic 'package' #04.65
 
 use strict;
 use warnings;
 use Encode;
+use Time::HiRes qw(gettimeofday); #04.65 nxt 3 lines
+use Scalar::Util qw(looks_like_number);
+use GPUtils qw(GP_Import GP_Export); # Package Helper Fn
 
 ### perlcritic parameters
 # these ones are NOT used! (constants,Policy::Modules::RequireFilenameMatchesPackage,Modules::RequireVersionVar,NamingConventions::Capitalization)
@@ -87,24 +94,49 @@ use Encode;
 ## no critic (ControlStructures::ProhibitCascadingIfElse)
 ## no critic (Documentation::RequirePodSections)
 
+### import FHEM functions / global vars
+### run before package compilation
+BEGIN {
+    # Import from main context
+    GP_Import(
+        qw(readingsSingleUpdate readingsBulkUpdate readingsBulkUpdateIfChanged readingsBeginUpdate readingsEndUpdate
+          Log3
+          AttrVal ReadingsVal ReadingsNum
+          addToDevAttrList  
+          AssignIoPort IOWrite
+          CommandDefine CommandDelete CommandModify
+          defs modules attr
+          FW_detail FW_wname FW_directNotify
+          readingFnAttributes
+          InternalTimer RemoveInternalTimer
+          init_done
+          IsDisabled IsDummy
+          deviceEvents devspec2array
+          AnalyzePerlCommand EvalSpecials
+          fhemTimeLocal)
+    );
+}
+
+### export to main context (with different name)
+GP_Export(qw(Initialize));
+
 ### MH Evolution Version string
-my $Eversion = '04.62 21-05-2021';
+my $Eversion = '04.66 03-08-2021';
 
-#string constant for autocreate
-my $modelErr = "MODEL_NOT_DEFINED";
+#string constants
+my $modelErr    = "MODEL_NOT_DEFINED"; # for autocreate
 
-my $ONFORTIMER = "on-for-timer";
-my $ONUNTIL = "on-until";
+my $ONFORTIMER  = "on-for-timer";
 my $OFFFORTIMER = "off-for-timer";
-my $OFFUNTIL = "off-until";
-my $TOGGLE = "toggle";
-my $RAW = "raw";
-my $RGB = "rgb";
-my $STRING = "string";
-my $VALUE = "value";
+my $ONUNTIL     = "on-until";
+my $OFFUNTIL    = "off-until";
+my $TOGGLE      = "toggle";
+my $RAW         = "raw";
+my $RGB         = "rgb";
+my $STRING      = "string";
+my $VALUE       = "value";
 
-#identifier for TUL - extended adressing
-my $TULid = 'C';
+my $TULid       = 'C'; #identifier for TUL - extended adressing
 
 #regex patterns
 #pattern for group-adress
@@ -193,11 +225,12 @@ my %dpttypes = (
 	"dpt7.007"      => {CODE=>"dpt7", UNIT=>q{h},   FACTOR=>1, OFFSET=>0, PATTERN=>qr/[+-]?\d{1,5}/ix, MIN=>0, MAX=>65535},
 	"dpt7.012"      => {CODE=>"dpt7", UNIT=>q{mA},  FACTOR=>1, OFFSET=>0, PATTERN=>qr/[+-]?\d{1,5}/ix, MIN=>0, MAX=>65535},
 	"dpt7.013"      => {CODE=>"dpt7", UNIT=>q{lux}, FACTOR=>1, OFFSET=>0, PATTERN=>qr/[+-]?\d{1,5}/ix, MIN=>0, MAX=>65535},
+	"dpt7.600"      => {CODE=>"dpt7", UNIT=>q{K},   FACTOR=>1, OFFSET=>0, PATTERN=>qr/[+]?\d{1,5}/ix,  MIN=>0, MAX=>12000},  # 04.66 Farbtemperatur
 
 	# 2-Octet signed Value 
 	"dpt8"          => {CODE=>"dpt8", UNIT=>q{},      FACTOR=>1,    OFFSET=>0, PATTERN=>qr/[+-]?\d{1,5}/ix, MIN=>-32768, MAX=>32767},
 	"dpt8.005"      => {CODE=>"dpt8", UNIT=>q{s},     FACTOR=>1,    OFFSET=>0, PATTERN=>qr/[+-]?\d{1,5}/ix, MIN=>-32768, MAX=>32767},
-	"dpt8.010"      => {CODE=>"dpt8", UNIT=>q{%},     FACTOR=>0.01, OFFSET=>0, PATTERN=>qr/[+-]?\d{1,5}/ix, MIN=>-32768, MAX=>32767},
+	"dpt8.010"      => {CODE=>"dpt8", UNIT=>q{%},     FACTOR=>0.01, OFFSET=>0, PATTERN=>qr/[+-]?\d{1,5}/ix, MIN=>-327.68, MAX=>327.67}, #04.66 min/max
 	"dpt8.011"      => {CODE=>"dpt8", UNIT=>q{&deg;}, FACTOR=>1,    OFFSET=>0, PATTERN=>qr/[+-]?\d{1,5}/ix, MIN=>-32768, MAX=>32767},
 
 	# 2-Octet Float value
@@ -221,6 +254,8 @@ my %dpttypes = (
 	"dpt9.025"      => {CODE=>"dpt9", UNIT=>q{l/h},  FACTOR=>1, OFFSET=>0, PATTERN=>qr/[-+]?(?:\d*[\.\,])?\d+/ix, MIN=>-670760, MAX=>670760},
 	"dpt9.026"      => {CODE=>"dpt9", UNIT=>q{l/h},  FACTOR=>1, OFFSET=>0, PATTERN=>qr/[-+]?(?:\d*[\.\,])?\d+/ix, MIN=>-670760, MAX=>670760},
 	"dpt9.028"      => {CODE=>"dpt9", UNIT=>q{km/h}, FACTOR=>1, OFFSET=>0, PATTERN=>qr/[-+]?(?:\d*[\.\,])?\d+/ix, MIN=>-670760, MAX=>670760},
+        "dpt9.029"      => {CODE=>"dpt9", UNIT=>q{g/m&sup3;}, FACTOR=>1, OFFSET=>0, PATTERN=>qr/[-+]?(?:\d*[\.\,])?\d+/ix, MIN=>-670760, MAX=>670760}, #04.66 Abs. Luftfeuchte
+        "dpt9.030"      => {CODE=>"dpt9", UNIT=>q{&mu;g/m&sup3;}, FACTOR=>1, OFFSET=>0, PATTERN=>qr/[-+]?(?:\d*[\.\,])?\d+/ix, MIN=>-670760, MAX=>670760}, #04.66 Dichte
 
 	# Time of Day
 	"dpt10"         => {CODE=>"dpt10", UNIT=>q{}, FACTOR=>undef, OFFSET=>undef, PATTERN=>qr/($PAT_TIME|now)/ix, MIN=>undef, MAX=>undef},
@@ -271,21 +306,32 @@ my %dpttypes = (
 #Init this device
 #This declares the interface to fhem
 #############################
-sub
-KNX_Initialize {
+#04.65 sub KNX_Initialize {
+sub Initialize {
 	my $hash = shift // return;
 
 	$hash->{Match}          = "^$TULid.*";
-	$hash->{GetFn}          = "KNX_Get";
-	$hash->{SetFn}          = "KNX_Set";
-	$hash->{StateFn}        = "KNX_State";
-	$hash->{DefFn}          = "KNX_Define";
-	$hash->{UndefFn}        = "KNX_Undef";
-	$hash->{ParseFn}        = "KNX_Parse";
-	$hash->{AttrFn}         = "KNX_Attr";
-	$hash->{NotifyFn}       = "KNX_Notify";
-	$hash->{DbLog_splitFn}  = "KNX_DbLog_split";
-	$hash->{FingerprintFn}  = "KNX_FingerPrint";
+#	$hash->{GetFn}          = "KNX_Get";
+#	$hash->{SetFn}          = "KNX_Set";
+#	$hash->{StateFn}        = "KNX_State";
+#	$hash->{DefFn}          = "KNX_Define";
+#	$hash->{UndefFn}        = "KNX_Undef";
+#	$hash->{ParseFn}        = "KNX_Parse";
+#	$hash->{AttrFn}         = "KNX_Attr";
+#	$hash->{NotifyFn}       = "KNX_Notify";
+#	$hash->{DbLog_splitFn}  = "KNX_DbLog_split";
+#	$hash->{FingerprintFn}  = "KNX_FingerPrint";
+	$hash->{DefFn}          = \&KNX_Define;
+	$hash->{UndefFn}        = \&KNX_Undef;
+	$hash->{SetFn}          = \&KNX_Set;
+	$hash->{GetFn}          = \&KNX_Get;
+	$hash->{StateFn}        = \&KNX_State;
+	$hash->{ParseFn}        = \&KNX_Parse;
+	$hash->{NotifyFn}       = \&KNX_Notify;
+	$hash->{AttrFn}         = \&KNX_Attr;
+	$hash->{DbLog_splitFn}  = \&KNX_DbLog_split;
+#04.66	$hash->{FingerprintFn}  = \&KNX_FingerPrint;
+
 	$hash->{AttrList}       = "IODev " . #tells the module the IO-Device to communicate with. Optionally set within definition.
             "disable:1 " .                   #device disabled 
             "showtime:1,0 " .                #shows time instead of received value in state
@@ -307,8 +353,7 @@ KNX_Initialize {
 #Define this device
 #Is called at every define
 #############################
-sub
-KNX_Define {
+sub KNX_Define {
 	my $hash = shift // return;
 	my $def = shift;
 	#enable newline within define with \
@@ -328,7 +373,6 @@ KNX_Define {
 	# check if the last arg matches any IO-Device - and assign it - else use the automatic mechanism
 	my @tulList = devspec2array('TYPE=(TUL|KNXTUL|KNXIO)',$hash);
 	foreach my $tuls (@tulList) {
-		Log3 ($name, 5, "KNX_define $name -TULlist= $tuls");
 		if ($tuls eq $a[int(@a) - 1]) {
 			$attr{$name}{IODev} = pop(@a);
 			last;
@@ -522,8 +566,7 @@ KNX_Define {
 #Release this device
 #Is called at every delete / shutdown
 #############################
-sub
-KNX_Undef {
+sub KNX_Undef {
 	my $hash = shift;
 	my $name = shift;
 
@@ -539,8 +582,7 @@ KNX_Undef {
 #Places a "read" Message on the KNX-Bus
 #The answer is treated as regular telegram
 #############################
-sub
-KNX_Get {
+sub KNX_Get {
 	my ($hash, @a) = @_;
 	my $name = $hash->{NAME};
 
@@ -587,8 +629,7 @@ KNX_Get {
 
 #Does something according the given cmd...
 #############################
-sub
-KNX_Set {
+sub KNX_Set {
 	my ($hash, @a) = @_;
 	my $name = $hash->{NAME};
 	my $ret = q{};
@@ -752,7 +793,6 @@ sub KNX_Set_dpt1 {
 	my ($hash, $targetGadName, $cmd, @arg) = @_;
 	my $name = $hash->{NAME};
 
-#	my $value = q{};
 	my $groupCode = $hash->{GADDETAILS}{$targetGadName}{CODE};
 
 	#delete any running timers
@@ -841,8 +881,7 @@ sub KNX_Set_dpt1 {
 
 #In case setstate is executed, a readingsupdate is initiated
 #############################
-sub
-KNX_State {
+sub KNX_State {
 	my ($hash, $time, $reading, $value) = @_;
 	my $name = $hash->{NAME};
 
@@ -866,8 +905,7 @@ KNX_State {
 
 #Get the chance to qualify attributes
 #############################
-sub
-KNX_Attr {
+sub KNX_Attr {
 	my ($cmd,$name,$aName,$aVal) = @_;
 	my $hash = $defs{$name};
 
@@ -945,7 +983,7 @@ sub KNX_Parse {
 	my $msg = shift;
 	my $ioName = $iohash->{NAME};
 
-	return q{} if (IsDisabled($ioName) || IsDummy($ioName)); # IO - device is disabled or dummy
+	return q{} if ((IsDisabled($ioName) == 1) || IsDummy($ioName)); # IO - device is disabled or dummy
 
 	#Msg format: 
 	#C<src>[wrp]<group><value> i.e. Cw00000101
@@ -1196,14 +1234,14 @@ sub KNX_checkAndClean {
 	my ($hash, $value, $gadName) = @_;
 	my $name = $hash->{NAME};
 	my $orgValue = $value;
-	
+
 	Log3 ($name, 5, "KNX_checkAndClean -enter: value= $value, gadName= $gadName");
-	
+
 	my $model = $hash->{GADDETAILS}{$gadName}{MODEL};
-	
+
 	#return unchecked, if this is a autocreate-device
 	return $value if ($model eq $modelErr);
-	
+
 	my $pattern = $dpttypes{$model}{PATTERN};
 
 	#trim whitespaces at the end
@@ -1211,6 +1249,10 @@ sub KNX_checkAndClean {
 	$value .= ':00' if ($model eq 'dpt10' && $value =~ /^[\d]{2}:[\d]{2}$/gix); # compatibility with widgetoverride :time
 
 	#match against model pattern
+#	my $pattern = qr/^($dpttypes{$model}{PATTERN})$/;
+#	($value) = ($value =~ m/$pattern/ix);
+#	return $UNDEF if (!defined($value));
+
 	my @tmp = ($value =~ m/$pattern/gix);
 	#loop through results
 	my $found = 0;
@@ -1222,14 +1264,14 @@ sub KNX_checkAndClean {
 			last;
 		}
 	}
-	
+
 	return $UNDEF if ($found == 0);
 
 	$value = KNX_limit ($hash, $value, $gadName, undef);
 
 	Log3 ($name, 3, "KNX_checkAndClean: value= $orgValue was casted to $value") if ($orgValue ne $value);
 	Log3 ($name, 5, "KNX_checkAndClean -exit: value= $value, gadName= $gadName, model= $model, pattern= $pattern");
-	
+
 	return $value;
 }
 
@@ -1330,7 +1372,7 @@ sub KNX_eval {
 	my $name = $hash->{NAME};
 	my $retVal = undef;
 
-	Log3 ($name, 5, "KNX_Eval-enter: $name, gadName: $gadName, evalString: $evalString");
+#04.65	Log3 ($name, 5, "KNX_Eval-enter: $name, gadName: $gadName, evalString: $evalString");
 
 	my $code = EvalSpecials($evalString,("%hash" => $hash, '%name' => $name, '%gadName' => $gadName, '%state' => $state)); # prepare vars for AnalyzePerlCommand
 	$retVal =  AnalyzePerlCommand(undef, $code);
@@ -1338,10 +1380,11 @@ sub KNX_eval {
 	$retVal = "ERROR" if (not defined ($retVal));
 
 	if ($retVal =~ /(^Forbidden|error)/ix) { # eval error or forbidden by Authorize
-		Log3 ($name, 2, "KNX_Eval-error: $retVal");
+		Log3 ($name, 2, "KNX_Eval-error: device= $name, gadName= $gadName, evalString= $evalString, result= $retVal"); #04.65
+#04.65		Log3 ($name, 2, "KNX_Eval-error: $retVal");
 		$retVal = 'ERROR';
 	}
-	Log3 ($name, 5, "KNX_Eval-exit: result: $retVal");
+#04.65	Log3 ($name, 5, "KNX_Eval-exit: result: $retVal");
 	return $retVal;
 }
 
@@ -1830,34 +1873,34 @@ The reading &lt;state&gt; will be updated with the last sent or received value.&
 As described above the parameter &lt;DPT&gt; must contain the corresponding DPT.<br /> 
 The optional parameteter [gadName] may contain an alias for the GAD. The gadName <b>must not</b> begin with one of the following strings: on, off, on-for-timer,
  on-until, off-for-timer, off-until, toggle, raw, rgb, string, value, set, get, listenonly, nosuffix.<br />
-Especially if answerReading is set to 1, it might be useful to modifiy the behaviour of single GADs. If you want to restrict the GAD, you can raise the flags "get", "set", or "listenonly".
+Especially if attribute <code>answerReading</code> is set to 1, it might be useful to modifiy the behaviour of single GADs. If you want to restrict the GAD, you can raise the flags "get", "set", or "listenonly".
  The usage should be self-explanatory. It is not possible to combine the flags.<br /> 
 Furthermore you can supply a IO-Device directly at startup. This is only required in special cases. For details see: <a href="#KNX-attr-KNX_IODev">IODev Attribute</a>.</p>
 <p>The GAD's are per default named with "g&lt;number&gt;". The corresponding reading-names are getG&lt;number&gt;, setG&lt;number&gt; and putG&lt;number&gt;.<br /> 
 If you supply &lt;gadName&gt; this name is used instead. The readings are &lt;gadName&gt;-get, &lt;gadName&gt;-set and &lt;gadName&gt;-put. 
 We will use the synonyms &lt;getName&gt;, &lt;setName&gt; and &lt;putName&gt; in this documentation.
 If you add the option "nosuffix", &lt;getName&gt;, &lt;setName&gt; and &lt;putName&gt; have the identical name - only &lt;gadName&gt;.</p>
-<p>Per default, the first group is used for sending. If you want to send via a different group, you have to address it it (set &lt;name&gt; &lt;gadName&gt; value).</p>
+<p>Per default, the first group is used for sending. If you want to send via a different group, you have to address it. E.g: <code>set &lt;name&gt; &lt;gadName&gt; &lt;value&gt; </code></p>
 <p>Without further attributes, all incoming and outgoing messages are translated into reading &lt;state&gt;.</p>
 <p>If enabled, the module <a href="#autocreate">autocreate</a> is creating a new definition for any unknown sender. The device itself will be disabled
  until you added a DPT to the definition and clear the disabled attribute. The name will be KNX_nnmmooo where nn is the line adress, mm the area and ooo the device.
  No FileLog or SVG definition is created for KNX-devices by autocreate. Use for example <code>define &lt;name&gt; FileLog &lt;filename&gt; KNX_.*</code> 
  to create a single FileLog-definition for all KNX-devices created by autocreate.<br />  
- Another option is to disable autocreate for KNX-devices in production environments (when no changed / additions are expected) by using&colon; <code>attr &lt;autocreate&gt; ignoreTypes KNX_.*</code></p>
+ Another option is to disable autocreate for KNX-devices in production environments (when no changes / additions are expected) by using&colon; <code>attr &lt;autocreate&gt; ignoreTypes KNX_.*</code></p>
 
 <p>Examples:</p>
 <code class="pad30l">define lamp1 KNX 0/10/11:dpt1:listenonly</code><br/>
-<code class="pad30l">arr lamp1 webCmd on:off</code><br/>
+<code class="pad30l">attr lamp1 webCmd on:off</code><br/>
 <code class="pad30l">attr lamp1 devStateIcon on::off off::on</code><br/>
-<br>
+<br/>
 <code class="pad30l">define lamp2 KNX 0/10/12:dpt1:steuern 0/10/13:dpt1.001:status</code><br/>
+<br/>
 <code class="pad30l">define lamp3 KNX 00A0D:dpt1.003 myTul</code><br/>
 
 <a id="KNX-set"></a>
 <p><strong>Set</strong></p>
 <p><code>set &lt;deviceName&gt; [gadName] &lt;on|off|toggle&gt;<br />
-  set &lt;deviceName&gt; [gadName] &lt;on-for-timer|on-until|off-for-timer|off-until&gt;
-&lt;timespec&gt;<br />
+  set &lt;deviceName&gt; [gadName] &lt;on-for-timer|on-until|off-for-timer|off-until&gt; &lt;timespec&gt;<br />
   set &lt;deviceName&gt; [gadName] &lt;value&gt;<br /></code></p>
 <p>Set sends the given value to the bus.<br /> If &lt;gadName&gt; is omitted, the first listed GAD of the device is used. 
  If the GAD is restricted in the definition with "get" or "listenonly", the set-command will be refused.<br /> 
@@ -1865,13 +1908,14 @@ If you add the option "nosuffix", &lt;getName&gt;, &lt;setName&gt; and &lt;putNa
  For all other binary DPT (dpt1.xxx) the min- and max-values can be used for en- and decoding alternatively to on/off.<br/> 
  After successful sending the value, it is stored in the readings &lt;setName&gt;.</p>
 <p>Example:</p>
-<br />
 <code class="pad30l">set lamp2 on</code><br/>
 <code class="pad30l">set lamp2 off</code><br/>
 <code class="pad30l">set lamp2 on-for-timer 10</code><br/>
 <code class="pad30l">set lamp2 on-until 13:15:00</code><br/>
 <code class="pad30l">set lamp2 steuern on-until 13:15:00</code><br/>
+<br/>
 <code class="pad30l">set myThermoDev 23.44</code><br/>
+<br/>
 <code class="pad30l">set my MessageDev Hallo Welt</code><br/>
 
 <a id="KNX-get"></a>
@@ -2015,6 +2059,7 @@ The answer from the bus-device updates reading and state.</p>
 <li><b>dpt7.007 </b>  0..65535 h</li>
 <li><b>dpt7.012 </b>  0..65535 mA</li>
 <li><b>dpt7.013 </b>  0..65535 lux</li>
+<li><b>dpt7.600 </b>  0..12000 K</li>
 <li><b>dpt8     </b>     -32768..32768</li>
 <li><b>dpt8.005 </b>  -32768..32768 s</li>
 <li><b>dpt8.010 </b>  -32768..32768 %</li>
@@ -2039,6 +2084,8 @@ The answer from the bus-device updates reading and state.</p>
 <li><b>dpt9.025 </b>  -670760.0..+670760.0 l/h</li>
 <li><b>dpt9.026 </b>  -670760.0..+670760.0 l/h</li>
 <li><b>dpt9.028 </b>  -670760.0..+670760.0 km/h</li>
+<li><b>dpt9.029 </b>  -670760.0..+670760.0 g/m&sup3;</li>
+<li><b>dpt9.030 </b>  -670760.0..+670760.0 &mu;g/m&sup3;</li>
 <li><b>dpt10    </b>     01:00:00</li>
 <li><b>dpt11    </b>     01.01.2000</li>
 <li><b>dpt12    </b>     0..+Inf</li>
@@ -2073,7 +2120,7 @@ The answer from the bus-device updates reading and state.</p>
 <code>set rollo g2 on </code>moves up rollo at window 2</br>
 <code>set rollo g2 off-for-timer 5 </code>moves down rollo at window 2 for 5 sec<br/>
 
-<p><em>Object with feedback, icon showing transistions:</em><br/>
+<p><em>Object with feedback, icon showing transistions:</em><br/></p>
 <code>define sps KNX 0/4/0:dpt1:steuern 0/4/1:dpt1:status</code><br/>
 <code>attr sps devStateIcon status-on:general_an:Aus status-off:general_aus:Ein steuern.*:hourglass:Aus</code><br/>
 <code>attr sps eventMap /steuern on:Ein/steuern off:Aus/</code><br/>
@@ -2155,7 +2202,15 @@ attr testStufen stateCmd {if ($gadName =~ 'Stufe(Ist|Soll)') { \</code><br />
   <code class="pad40l">$state; \</code><br />
   <code class="pad20l">} \</code><br />
 <code>}<br />
-attr testStufen widgetOverride Stufe:slider,0,1,8<br />
+attr testStufen widgetOverride Stufe:slider,0,1,8
+</code><br />
+
+<p><em>How to handle dpt's not available in KNX-Module:</em><br />
+Problem: You know you receive (from a KNX-Sensor/Device) a 2 Byte Floating Point Value, but the sub-Datapoint is not defined.<br />
+Solution: define a base DPT, in this example dpt9 and add a unit-value with the format attribute.</p>
+<code>
+define dpt9test KNX 0/4/6:dpt9 <br />
+attr dpt9test format g/m&sup3; # gramm / m&sup3; <br />
 </code><br />
 
 </ul>
