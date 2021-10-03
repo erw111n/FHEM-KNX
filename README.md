@@ -1,6 +1,5 @@
 # FHEM-KNX
-## This directory contains updated code for FHEM, especially for 10_KNX.pm module
-and/or patches, plus a few utilities.
+## This branch is obsolete as the modul 10_KNX.pm is now in the official FHEM SVN !
 ### How to use: 
 To keep your FHEM up-to-date with the new 10_KNX.pm, add following line:
 
