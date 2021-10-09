@@ -1,28 +1,4 @@
-*** changes to 10_KNX.pm: for details, refer to:
+*** changes to 00_KNXIO.pm: for details, refer to:
 *** https://github.com/erw111n/FHEM-KNX/blob/main/updateHistory.txt
-20210817 Version 04.66 no mayor functional changes
-    own package FHEM::KNX
-    remove Fingerprint Function
-    new dpts: dpt7.600, dpt9.029, dpt9.030
-20210521 Version 04.62 fix readingsnames "gx:...:nosuffix"
-20210517 Version 04.60
--change: 50% of the changes of the unsucessful Vers. 04.52
-        IsDisabled when state = inactive
-        cleanup, replaced ok-dialog on get-cmd by "err-msg"
-        docu correction
-        fixed KNX_replaceByRegex
-        replace eval by AnalyzePerlCommand
-        added FingerPrintFn, fix DbLog_split
-20210426 revert to Version E04.43
-- problems with E04.53
-20210419 Version E04.52
-- change: own package: FHEM::KNX
-      replaced ok-dialog on get-cmd by "err-msg"
-      replace eval by AnalyzePerlCommand
-      docu correction
-      fixed KNX_replaceByRegex
-      fix IsDisabled when state = inactive
-      modified dpt patterns algo
-      fix DbLog_split
-- new: added FingerPrintFn
+20211009 first commit
 *** end of changes ***
