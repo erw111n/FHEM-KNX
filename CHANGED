@@ -1,4 +1,5 @@
 *** changes to 00_KNXIO.pm: for details, refer to:
+the module 10_KNX-pm is obsolete in this directory, use 10_KNX.pm from the FHEM SVN!
 *** https://github.com/erw111n/FHEM-KNX/blob/main/updateHistory.txt
 20211009 first commit
 *** end of changes ***
