@@ -1,5 +1,5 @@
 ##############################################
-# $Id: 00_KNXIO.pm 001.51 2021-10-03 11:22:33Z erwin $
+# $Id: 00_KNXIO.pm 001.60 2021-10-19 11:22:33Z erwin $
 # new base module for KNX-communication
 # idea: merge some functions of TUL- & KNXTUL-module into one and add more connectivity 
 # function: M - multicast support (like in KNXTUL) - connect to knxd or KNX-router
@@ -14,8 +14,8 @@
 #
 ##############################################
 ### changelog:
-# dd/mm/yyyy 01.51 initial beta version
-#                  enable hostnames for mode H & T
+# 19/10/2021 01.60 initial beta version
+#            enable hostnames for mode H & T
 
 
 ### sample timer calling recursive! - stolen from MQTT2_CLIENT
@@ -29,6 +29,8 @@ package FHEM::KNXIO; ## no critic 'package'
 use strict;
 use warnings;
 use IO::Socket;
+use English qw(-no_match_vars);
+use Time::HiRes qw(gettimeofday);
 use DevIo qw(DevIo_OpenDev DevIo_SimpleWrite DevIo_SimpleRead DevIo_CloseDev DevIo_Disconnected DevIo_IsOpen);
 use English qw(-no_match_vars);
 use GPUtils qw(GP_Import GP_Export); # Package Helper Fn
@@ -64,8 +66,9 @@ BEGIN {
           IsDisabled IsDummy IsDevice
           deviceEvents devspec2array
           AnalyzePerlCommand EvalSpecials
-          fhemTimeLocal gettimeofday TimeNow)
+          TimeNow)
     );
+#removed from import: fhemTimeLocal  gettimeofday
 
 # export to main context
 GP_Export(qw(Initialize 
@@ -80,9 +83,9 @@ GP_Export(qw(Initialize
 # global vars/constants
 my $KNXIO_hasMulticast = eval "use IO::Socket::Multicast;1";  ## no critic 'ProhibitStringyEval' # flag for multicast support
 $KNXIO_hasMulticast = 0 if ($EVAL_ERROR); # flag for multicast support
-my $PAT_IP = '[\d]{1,3}(\.[\d]{1,3}){3}';
-my $PAT_PORT    = '[\d]{4,5}';
-my $TULID = 'C';
+my $PAT_IP   = '[\d]{1,3}(\.[\d]{1,3}){3}';
+my $PAT_PORT = '[\d]{4,5}';
+my $TULID    = 'C';
 
 #####################################
 sub Initialize {
@@ -116,7 +119,8 @@ sub Initialize {
 #####################################
 ### syntax: define <name> KNXIO <mode one of: M|S|H|T)> <hostip or hostname>:<port> <phy-address>
 sub KNXIO_Define {
-	my ($hash, $def) = @_;
+	my $hash = shift;
+	my $def  = shift;
 	my @arg = split(/[\s\t\n]+/x,$def);
 	my $name = $arg[0] // return "KNXIO: no name specified";
 
@@ -154,7 +158,6 @@ sub KNXIO_Define {
 	}
 	elsif ($mode =~ m/[HT]/ix) {
 		if ($host !~ /$PAT_IP/ix) { # not an ip-address, lookup name
-			### use HttpUtils to resolve hostname
 =pod
 			# blocking variant !
 			my $phost = inet_aton($host);
@@ -162,31 +165,16 @@ sub KNXIO_Define {
 			$host = inet_ntoa($phost);
 			return "KNXIO_define: host name could not be resolved" if (! defined($host));
 =cut
+			# do it non blocking! - use HttpUtils to resolve hostname
 			$hash->{PORT} = $port; # save port...
 			$hash->{timeout} = 4; # TO for DNS req.
 			$hash->{DNSWAIT} = 1;
-			my $KNXIO_DnsQ = HttpUtils_gethostbyname($hash,$host,1,sub() {
-				my($hash,$error,$host)=@_;
-				if ($error) {
-					delete $hash->{DeviceName};
-					delete $hash->{timeout};
-					delete $hash->{DNSWAIT};
-					delete $hash->{PORT};
-					Log3($name, 1, "KNXIO_define: hostname could not be resolved: $error");
-					return  "KNXIO_define: hostname could not be resolved: $error";
-				}
-				$host = ip2str($host);
-				Log3($name, 3, "KNXIO_define: DNS query result= $host");
-				$hash->{DeviceName} = $host . q{:} . $hash->{PORT};
-				delete $hash->{timeout};
-				delete $hash->{DNSWAIT};
-				delete $hash->{PORT};
-				return;
-			} );
+			my $KNXIO_DnsQ = HttpUtils_gethostbyname($hash,$host,1,\&KNXIO_gethostbyname_Cb);
 		}
 
-###		$hash->{DeviceName} = $host . q{:} . $port; # for DevIo
-##		$hash->{DeviceName} = $arg[3]; # for DevIo
+		else {
+			$hash->{DeviceName} = $host . q{:} . $port; # for DevIo
+		}
 	}
 
 	$hash->{NAME}      = $name;
@@ -196,8 +184,7 @@ sub KNXIO_Define {
 
 	KNXIO_closeDev($hash) if ($init_done);
 
-	$hash->{PARTIAL}   = q{};
-
+	$hash->{PARTIAL}      = q{};
 	$hash->{'.FIFO'}      = q{}; # read fifo
 	$hash->{'.FIFOTIMER'} = 0;
 	$hash->{'.FIFOMSG'}   = q{};
@@ -249,15 +236,18 @@ sub KNXIO_Read {
 	Log3( $name, 5, 'KNXIO_Read: buf= ' . unpack('H*',$buf));
 
 	### process in indiv. subs
-	if ($mode eq 'H') {
-		return KNXIO_ReadH($hash,$buf);
+	my $readmodes = {
+               H => \&KNXIO_ReadH,
+               S => \&KNXIO_ReadST,
+               T => \&KNXIO_ReadST,
+               M => \&KNXIO_ReadM,
+	};
+
+	if (ref $readmodes->{$mode} eq 'CODE') {
+		$readmodes->{$mode}->($hash, $buf);
+		return;
 	}
-	elsif ($mode =~ /[ST]/ix) {
-		return KNXIO_ReadST($hash,$buf);
-	}
-	elsif ($mode eq 'M') {
-		return KNXIO_ReadM($hash,$buf);
-	}
+
 	Log3 $name, 2,"KNXIO_Read failed - invalid mode $mode specified";
 	return;
 }
@@ -387,10 +377,10 @@ sub KNXIO_ReadH {
 			$discardFrame = 1;
 		}
 		if ($rxseqcntr != $hash->{'.SEQUENCECNTR'}) { # really out of sequence
-			Log3($name, 3, 'KNXIO_Read: TunnelRequest received: out of sequence, rx=' . $rxseqcntr . ' tx=' . $hash->{'.SEQUENCECNTR'} . '- no ack & discard');
+			Log3($name, 3, 'KNXIO_Read: TunnelRequest received: out of sequence, (seqcntrRx=' . $rxseqcntr . ' (seqcntrTx=' . $hash->{'.SEQUENCECNTR'} . '- no ack & discard');
 			return;
 		}
-		Log3($name, 4, 'KNXIO_Read: TunnelRequest received - send Ack and decode. seqcntr=' . $hash->{'.SEQUENCECNTR'} ) if (! defined($discardFrame));
+		Log3($name, 4, 'KNXIO_Read: TunnelRequest received - send Ack and decode. seqcntrRx=' . $hash->{'.SEQUENCECNTR'} ) if (! defined($discardFrame));
 		my $tacksend = pack('nnnCCCC',0x0610,0x0421,10,4,$ccid,$hash->{'.SEQUENCECNTR'},0); # send ack
 		$hash->{'.SEQUENCECNTR'}++;
 		$hash->{'.SEQUENCECNTR'} = 0 if ($hash->{'.SEQUENCECNTR'} > 255);
@@ -413,6 +403,8 @@ sub KNXIO_ReadH {
 			Log3($name, 3, 'KNXIO_Read: Tunneling Ack received ' . 'CCID=' . $ccid . ' txseq=' . $txseqcntr . (($errcode)?' - Status= ' . KNXIO_errCodes($errcode):q{}));
 #what next ?			
 		}
+
+#		delete $hash->{'.LASTSENTMSG'}; # was saved for resend!
 		$hash->{'.SEQUENCECNTR_W'}++;
 		$hash->{'.SEQUENCECNTR_W'} = 0 if ($hash->{'.SEQUENCECNTR_W'} > 255);
 		RemoveInternalTimer($hash,\&KNXIO_TunnelRequestTO); # all ok, stop timer
@@ -463,7 +455,7 @@ Log3 $name, 5, "H-read cpIP= $contolpointIp[0]\.$contolpointIp[1]\.$contolpointI
 	}
 	elsif ( $responseID == 0x020A) { # Disconnect response
 		Log3($name, 4, 'KNXIO_Read: DisconnectResponse received - sending connrequ');
-
+$attr{$name}{verbose} = 3; # temp
 		$msg = KNXIO_prepareConnRequ($hash);
 	}
 	else {
@@ -479,7 +471,10 @@ Log3 $name, 5, "H-read cpIP= $contolpointIp[0]\.$contolpointIp[1]\.$contolpointI
 sub KNXIO_Ready {
 	my $hash = shift;
 	my $name = $hash->{NAME};
-	return KNXIO_openDev($hash) if((ReadingsVal($hash, 'state', 'disconnected') eq 'disconnected') && $init_done && !exists($hash->{DNSWAIT}));
+
+	return if (! $init_done || exists($hash->{DNSWAIT}) || IsDisabled($name) == 1);
+	return if (exists($hash->{NEXT_OPEN}) && $hash->{NEXT_OPEN} < gettimeofday()); # avoid open loop 
+	return KNXIO_openDev($hash) if(ReadingsVal($hash, 'state', 'disconnected') eq 'disconnected');
 	return;
 }
 
@@ -552,20 +547,19 @@ sub KNXIO_Write {
 		if ($mode eq 'M') {
 			$completemsg = pack('nnnnnnnCCC*',0x0610,0x0530,$datasize + 16,0x2900,0xBCE0,0,$dst,$datasize,0,@data);
 		}
-
 		elsif ($mode eq 'S' ) {  #format: size | 0x0027 | src  | dst | 0 | data
 			$completemsg = pack('nnnnCC*',$datasize + 7,0x0027,$src,$dst,0,@data);
 		}
-
 		elsif ($mode eq 'T' ) {
 			$completemsg = pack('nnnCC*',$datasize + 5,0x0027,$dst,0,@data);
 		}
-
-		elsif ($mode eq 'H') {
+		else {
+#		elsif ($mode eq 'H') {
 			# total length= $size+20 - include 2900BCEO,src,dst,size,0
 			$completemsg = pack('nnnCCCCnnnnCCC*',0x0610,0x0420,$datasize + 20,4,$hash->{'.CCID'},$hash->{'.SEQUENCECNTR_W'},0,0x1100,0xBCE0,0,$dst,$datasize,0,@data); # send$
 
 			# Timeout function - expect TunnelAck within 1 sec! - but if fhem has a delay....
+			$hash->{'.LASTSENTMSG'} = $completemsg if (! exists($hash->{'.LASTSENTMSG'})); # save msg for resend in case of TO
 			InternalTimer(gettimeofday() + 2, \&KNXIO_TunnelRequestTO, $hash);
 		}
 
@@ -695,12 +689,39 @@ sub KNXIO_callback {
 ######## private functions ########
 ###################################
 
+### called from define-HttpUtils_gethostbynam when hostname needs to be resolved
+### process callback from HttpUtils_gethostbyname
+sub KNXIO_gethostbyname_Cb {
+	my $hash  = shift;
+	my $error = shift;
+	my $dhost = shift;
+
+	my $name  = $hash->{NAME};
+	if ($error) {
+		delete $hash->{DeviceName};
+		delete $hash->{timeout};
+		delete $hash->{DNSWAIT};
+		delete $hash->{PORT};
+		Log3($name, 1, "KNXIO_define: hostname could not be resolved: $error");
+		return  "KNXIO_define: hostname could not be resolved: $error";
+	}
+	my $host = ip2str($dhost);
+	Log3($name, 3, "KNXIO_define: DNS query result= $host");
+	$hash->{DeviceName} = $host . q{:} . $hash->{PORT};
+	delete $hash->{timeout};
+	delete $hash->{DNSWAIT};
+	delete $hash->{PORT};
+	return;
+}
+
 ### called from define - after init_complete
 ### return undef on success
 sub KNXIO_openDev {
 	my $hash = shift;
 	my $name = $hash->{NAME};
 	my $mode = $hash->{model};
+
+	return if (IsDisabled($name) == 1);
 
 	if (exists $hash->{DNSWAIT}) {
 		$hash->{DNSWAIT} += 1;
@@ -725,7 +746,6 @@ sub KNXIO_openDev {
 	$host = $port if ($param =~ /UNIX:STREAM:/ix); 
 
 	Log3 ($name, 5, "KNXIO_openDev: $mode, $host, $port, reopen=$reopen");
-	return if (IsDisabled($name) == 1);
 
 	my $ret = undef; # result
 
@@ -770,13 +790,14 @@ sub KNXIO_openDev {
 	}
 
 	### tunneling TCP
-	elsif ($mode eq 'T') {
+	else {
+#	elsif ($mode eq 'T') {
 		$ret = DevIo_OpenDev($hash,$reopen,\&KNXIO_init,\&KNXIO_callback);
 	}
 
-	else {
-		return "KNXIO_open: Mode $mode not supported, used one of M,S,H,T";
-	}
+#	else {
+#		return "KNXIO_open: Mode $mode not supported, used one of M,S,H,T";
+#	}
 
 	if(defined($ret) && $ret) {
 		Log3 ($name, 1, "KNXIO_openDev: Cannot open KNXIO-Device $name, ignoring it");
@@ -792,8 +813,6 @@ sub KNXIO_init {
 	my $name = $hash->{NAME};
 	my $mode = $hash->{model};
 
-	readingsSingleUpdate($hash, "state", "connected", 1);
-
 	if ($mode =~ m/[ST]/ix) {
 		my $opengrpcon = pack("nnnC",(5,0x26,0,0)); # KNX_OPEN_GROUPCON
 		DevIo_SimpleWrite($hash,$opengrpcon,0); 
@@ -802,14 +821,11 @@ sub KNXIO_init {
 	elsif ($mode eq 'H') {
 		my $connreq = KNXIO_prepareConnRequ($hash);
 
-		DoTrigger($name, 'CONNECTED');
-		Log3($name, 4, "KNXIO_init: send: " . unpack('H*',$connreq));
+#		Log3($name, 4, "KNXIO_init: send: " . unpack('H*',$connreq));
 		DevIo_SimpleWrite($hash,$connreq,0);
 	}
 
 	elsif ($mode eq 'M') {
-		Log3 ($name, 1, 'KNXIO_init mode M called');
-
 		my $reopen = exists($hash->{NEXT_OPEN})?1:0;
 		my $conn = $hash->{MCDev};
 		my (undef, $host, $port, undef) = split(/[\s:]/ix,$hash->{DEF});
@@ -825,9 +841,10 @@ sub KNXIO_init {
 		} else {
 			Log3 ($name, 3, "KNXIO_init: device $name opened");
 		}
-
-#		DoTrigger($name, 'CONNECTED');
 	}
+
+#	DoTrigger($name, 'CONNECTED');
+	readingsSingleUpdate($hash, "state", "connected", 1);
 
 	return;
 }
@@ -1217,6 +1234,15 @@ sub KNXIO_TunnelRequestTO {
 	my $name = $hash->{NAME};
 
 $attr{$name}{verbose} = 4; # temp
+	# try resend...but only once
+	if (exists($hash->{'.LASTSENTMSG'})) {
+		Log3($name, 4, 'KNXIO_TunnelRequestTO hit - attempt resend');
+		my $msg = $hash->{'.LASTSENTMSG'};
+		DevIo_SimpleWrite($hash,$msg,0);
+		delete $hash->{'.LASTSENTMSG'}; 
+		InternalTimer(gettimeofday() + 2, \&KNXIO_TunnelRequestTO, $hash);
+		return;
+	}
 
 	Log3($name, 4, 'KNXIO_TunnelRequestTO hit - sending disconnect request');
 
@@ -1232,10 +1258,10 @@ $attr{$name}{verbose} = 4; # temp
 sub KNXIO_errCodes {
 	my $errcode = shift;
 
-	my %errlist = (0=>'NO_ERROR',1=>'E_HOST_PROTCOL',2=>'E_VERSION_NOT_SUPPORTED',4=>'E_SEQUENCE_NUMBER',33=>'E_CONNECTION_ID',
+	my $errlist = {0=>'NO_ERROR',1=>'E_HOST_PROTCOL',2=>'E_VERSION_NOT_SUPPORTED',4=>'E_SEQUENCE_NUMBER',33=>'E_CONNECTION_ID',
                        34=>'E_CONNECT_TYPE',35=>'E_CONNECTION_OPTION',36=>'E_NO_MORE_CONNECTIONS',38=>'E_DATA_CONNECTION',39=>'E_KNX_CONNECTION',
-                       41=>'E_TUNNELLING_LAYER');
-	my $errtxt = $errlist{$errcode};
+                       41=>'E_TUNNELLING_LAYER',};
+	my $errtxt = $errlist->{$errcode};
 	$errtxt = 'E_UNDEFINED_ERROR ' . $errcode if (! defined($errtxt));
 	return $errtxt; 
 }
