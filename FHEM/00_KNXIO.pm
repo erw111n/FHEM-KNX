@@ -51,7 +51,7 @@ BEGIN {
     GP_Import(
         qw(readingsSingleUpdate readingsBulkUpdate readingsBulkUpdateIfChanged readingsBeginUpdate readingsEndUpdate
           Log3
-          AttrVal ReadingsVal ReadingsNum
+          AttrVal ReadingsVal ReadingsNum setReadingsVal
           AssignIoPort IOWrite
           CommandDefine CommandDelete CommandModify CommandDefMod
           DevIo_OpenDev DevIo_SimpleWrite DevIo_SimpleRead DevIo_CloseDev DevIo_Disconnected DevIo_IsOpen
@@ -68,7 +68,6 @@ BEGIN {
           AnalyzePerlCommand EvalSpecials
           TimeNow)
     );
-#removed from import: fhemTimeLocal  gettimeofday
 
 # export to main context
 GP_Export(qw(Initialize 
@@ -133,8 +132,7 @@ sub KNXIO_Define {
 
 	my ($host,$port) = split(/[:]/ix,$arg[3]);
 
-	return q{KNXIO-define: invalid ip-address or port, correct syntax is: "define <name> KNXIO <H|M|T> <ip-address|name>:<port> <phy-adress>"} if ($port !~ /$PAT_PORT/ix);
-#	return q{KNXIO-define: invalid ip-address or port, correct syntax is: "define <name> KNXIO <H|M|T> <ip-address|name>:<port> <phy-adress>"} if ($mode =~ /[MHT]/ix && ($host . q{:} . $port) !~ qr/([\d]{1,3}(\.[\d]{1,3}){3}|[^:]+):[\d]{4,5}/ix);
+	return q{KNXIO-define: invalid ip-address or port, correct syntax is: "define <name> KNXIO <H|M|T> <ip-address|name>:<port> <phy-adress>"} if ($mode =~ /[MHT]/ix && $port !~ /$PAT_PORT/ix);
 
 	if (exists($hash->{OLDDEF})) { # modify definition....
 		KNXIO_closeDev($hash);
@@ -188,7 +186,7 @@ sub KNXIO_Define {
 	$hash->{'.FIFO'}      = q{}; # read fifo
 	$hash->{'.FIFOTIMER'} = 0;
 	$hash->{'.FIFOMSG'}   = q{};
- 
+
 	# Devio-parameters
 	$hash->{nextOpenDelay} = 60;
 
@@ -210,7 +208,7 @@ sub KNXIO_Attr {
 			KNXIO_closeDev($hash);
 		} else {
 			CommandModify(undef, "$name $hash->{DEF}"); # do a defmod ...
-#			CommandDefMod(undef, "$name $hash->{DEF}"); # do a defmod ...
+#			CommandDefMod(undef, "-temporary $name $hash->{DEF}"); # do a defmod ...
 		}
 	}
 	return;
@@ -401,7 +399,7 @@ sub KNXIO_ReadH {
 		($ccid,$txseqcntr,$errcode) = unpack('x7CCC',$buf);
 		if ($errcode > 0) {
 			Log3($name, 3, 'KNXIO_Read: Tunneling Ack received ' . 'CCID=' . $ccid . ' txseq=' . $txseqcntr . (($errcode)?' - Status= ' . KNXIO_errCodes($errcode):q{}));
-#what next ?			
+#what next ?
 		}
 
 #		delete $hash->{'.LASTSENTMSG'}; # was saved for resend!
@@ -446,7 +444,7 @@ Log3 $name, 5, "H-read cpIP= $contolpointIp[0]\.$contolpointIp[1]\.$contolpointI
 	}
 	elsif ( $responseID == 0x0209) { # Disconnect request
 		Log3($name, 4, 'KNXIO_Read: DisconnectRequest received, restarting connenction');
-  
+
 		$ccid = unpack('x6C',$buf); 
 		$msg = pack('nnnCC',(0x0610,0x020A,8,$ccid,0));
 		DevIo_SimpleWrite($hash,$msg,0); # send disco response 
@@ -540,7 +538,7 @@ sub KNXIO_Write {
 			$data[0] = $acpi;
 		}
 
-		Log3 $name, 5, 'KNXIO_Write: str / size / acpi ' . unpack('H*',@data) . ' / ' . $datasize . ' / ' .  $acpi;
+		Log3 $name, 5, q{KNXIO_Write: str/size/acpi/src/dst= } . unpack('H*',@data) . q{/} . $datasize . q{/} .  $acpi . q{/} . unpack("H*",$src) . q{/} . unpack("H*",$dst);
 		my $completemsg = q{};
 		my $ret = 0;
 
@@ -548,19 +546,20 @@ sub KNXIO_Write {
 			$completemsg = pack('nnnnnnnCCC*',0x0610,0x0530,$datasize + 16,0x2900,0xBCE0,0,$dst,$datasize,0,@data);
 		}
 		elsif ($mode eq 'S' ) {  #format: size | 0x0027 | src  | dst | 0 | data
-			$completemsg = pack('nnnnCC*',$datasize + 7,0x0027,$src,$dst,0,@data);
+			$completemsg = pack('nnnCC*',$datasize + 5,0x0027,$dst,0,@data);
+#			$completemsg = pack('nnnnCC*',$datasize + 7,0x0027,$src,$dst,0,@data);
 		}
 		elsif ($mode eq 'T' ) {
 			$completemsg = pack('nnnCC*',$datasize + 5,0x0027,$dst,0,@data);
 		}
-		else {
-#		elsif ($mode eq 'H') {
+		else { # $mode eq 'H'
 			# total length= $size+20 - include 2900BCEO,src,dst,size,0
-			$completemsg = pack('nnnCCCCnnnnCCC*',0x0610,0x0420,$datasize + 20,4,$hash->{'.CCID'},$hash->{'.SEQUENCECNTR_W'},0,0x1100,0xBCE0,0,$dst,$datasize,0,@data); # send$
+			$completemsg = pack('nnnCCCCnnnnCCC*',0x0610,0x0420,$datasize + 20,4,$hash->{'.CCID'},$hash->{'.SEQUENCECNTR_W'},0,0x1100,0xBCE0,0,$dst,$datasize,0,@data); # send TunnelInd
 
 			# Timeout function - expect TunnelAck within 1 sec! - but if fhem has a delay....
-			$hash->{'.LASTSENTMSG'} = $completemsg if (! exists($hash->{'.LASTSENTMSG'})); # save msg for resend in case of TO
-			InternalTimer(gettimeofday() + 2, \&KNXIO_TunnelRequestTO, $hash);
+			$hash->{'.LASTSENTMSG'} = $completemsg; # save msg for resend in case of TO
+#			$hash->{'.LASTSENTMSG'} = $completemsg if (! exists($hash->{'.LASTSENTMSG'})); # save msg for resend in case of TO
+			InternalTimer(gettimeofday() + 1.5, \&KNXIO_TunnelRequestTO, $hash);
 		}
 
 		$ret = DevIo_SimpleWrite($hash,$completemsg,0);
@@ -613,13 +612,45 @@ sub KNXIO_openDevMC {
 	my $mode = $hash->{model};
 
 	my $reopen = (exists($hash->{NEXT_OPEN}))?1:0;
-        my $param = $hash->{DeviceName}; # (connection-code):ip:port or socket param
+	my $dev = $hash->{DeviceName}; # (connection-code):ip:port or socket param
+#	my $param = $hash->{DeviceName}; # (connection-code):ip:port or socket param
+#	my (undef, $host, $port, undef) = split(/[\s:]/ix,$dev);
 	my (undef, $host, $port, undef) = split(/[\s:]/ix,$hash->{DEF});
 
 	Log3($name, 5, 'KNXIO_openDevMC called');
 
+	if($hash->{NEXT_OPEN} && gettimeofday() < $hash->{NEXT_OPEN}) {
+##		return &$doCb(undef); # Forum 53309
+		return;
+	}
+
 	my $conn = 0;
+	delete($readyfnlist{"$name.$dev"});
+
 	$conn = IO::Socket::Multicast->new(Proto => 'udp', LocalAddr => $host, LocalPort => $port, ReuseAddr => 1);
+## modelled after DevIo $doTcpTail
+	if ($conn) {
+		delete($hash->{NEXT_OPEN});
+##?		$conn->setsockopt(SOL_SOCKET, SO_KEEPALIVE, 1);
+	} else {
+		Log3 ($name, 2, "KNXIO_openDevMC: $name: Can't connect: $ERRNO") if(!$reopen); # PBP
+		$readyfnlist{"$name.$dev"} = $hash;
+		setReadingsVal($hash, 'state', 'disconnected', TimeNow());
+##		DevIo_setStates($hash, "disconnected");
+		DoTrigger($name, "DISCONNECTED") if(!$reopen);
+		$hash->{NEXT_OPEN} = gettimeofday() + $hash->{nextOpenDelay};
+		return 0;
+	}
+
+##	$hash->{WEBSOCKET} = 1 if($proto eq "ws:");
+	$hash->{MCDev} = $conn;
+##	$hash->{TCPDev} = $conn;
+	$hash->{FD} = $conn->fileno();
+	$hash->{CD} = $conn;
+	$selectlist{"$name.$dev"} = $hash;
+	return 1;
+
+=pod
 	if (!($conn)) {
 		Log3 ($name, 2, "KNXIO_openDevMC: Can't connect: $ERRNO") if(!$reopen); # PBP
 		KNXIO_disconnect($hash);
@@ -634,6 +665,7 @@ sub KNXIO_openDevMC {
 	$hash->{FD} = $conn->fileno();
 	$selectlist{"$name.$param"} = $hash;
 	return 1; # ok
+=cut
 }
 
 sub KNXIO_ReadMC {
@@ -697,10 +729,10 @@ sub KNXIO_gethostbyname_Cb {
 	my $dhost = shift;
 
 	my $name  = $hash->{NAME};
+	delete $hash->{timeout};
+	delete $hash->{DNSWAIT};
 	if ($error) {
 		delete $hash->{DeviceName};
-		delete $hash->{timeout};
-		delete $hash->{DNSWAIT};
 		delete $hash->{PORT};
 		Log3($name, 1, "KNXIO_define: hostname could not be resolved: $error");
 		return  "KNXIO_define: hostname could not be resolved: $error";
@@ -708,8 +740,6 @@ sub KNXIO_gethostbyname_Cb {
 	my $host = ip2str($dhost);
 	Log3($name, 3, "KNXIO_define: DNS query result= $host");
 	$hash->{DeviceName} = $host . q{:} . $hash->{PORT};
-	delete $hash->{timeout};
-	delete $hash->{DNSWAIT};
 	delete $hash->{PORT};
 	return;
 }
@@ -790,14 +820,9 @@ sub KNXIO_openDev {
 	}
 
 	### tunneling TCP
-	else {
-#	elsif ($mode eq 'T') {
+	else { # $mode eq 'T'
 		$ret = DevIo_OpenDev($hash,$reopen,\&KNXIO_init,\&KNXIO_callback);
 	}
-
-#	else {
-#		return "KNXIO_open: Mode $mode not supported, used one of M,S,H,T";
-#	}
 
 	if(defined($ret) && $ret) {
 		Log3 ($name, 1, "KNXIO_openDev: Cannot open KNXIO-Device $name, ignoring it");
@@ -820,8 +845,6 @@ sub KNXIO_init {
 
 	elsif ($mode eq 'H') {
 		my $connreq = KNXIO_prepareConnRequ($hash);
-
-#		Log3($name, 4, "KNXIO_init: send: " . unpack('H*',$connreq));
 		DevIo_SimpleWrite($hash,$connreq,0);
 	}
 
@@ -849,7 +872,7 @@ sub KNXIO_init {
 	return;
 }
 
-### send connection request
+### prepare connection request
 ### called from init, disconn response, disconn request
 ### returns packed string, ready for sending with DevIo
 sub KNXIO_prepareConnRequ {
@@ -866,7 +889,7 @@ sub KNXIO_prepareConnRequ {
 	my $hpaid = pack('nCCCCn',(0x0801,0,0,0,0,0)); # dest can be 0,0
 	my $ctype = pack('CCCC',(4,4,2,0)); # 04040200 for udp tunnel_connection/Tunnel_linklayer
 
-	my  $connreq = pack('nnn',0x0610,0x0205,0x1A) . $hpais . $hpaid . $ctype;
+	my $connreq = pack('nnn',0x0610,0x0205,0x1A) . $hpais . $hpaid . $ctype;
 	$hash->{'.SEQUENCECNTR'} = 0; # read requests
 	$hash->{'.SEQUENCECNTR_W'} = 0; # write requests
 	RemoveInternalTimer($hash,\&KNXIO_keepAliveTO); # reset timeout timer
@@ -1233,6 +1256,7 @@ sub KNXIO_TunnelRequestTO {
 	my $hash = shift;
 	my $name = $hash->{NAME};
 
+	RemoveInternalTimer($hash,\&KNXIO_TunnelRequestTO);
 $attr{$name}{verbose} = 4; # temp
 	# try resend...but only once
 	if (exists($hash->{'.LASTSENTMSG'})) {
@@ -1240,7 +1264,7 @@ $attr{$name}{verbose} = 4; # temp
 		my $msg = $hash->{'.LASTSENTMSG'};
 		DevIo_SimpleWrite($hash,$msg,0);
 		delete $hash->{'.LASTSENTMSG'}; 
-		InternalTimer(gettimeofday() + 2, \&KNXIO_TunnelRequestTO, $hash);
+		InternalTimer(gettimeofday() + 1.5, \&KNXIO_TunnelRequestTO, $hash);
 		return;
 	}
 
@@ -1289,7 +1313,7 @@ sub KNXIO_errCodes {
 <p><strong>Define</strong></p>
 <p><code>define &lt;name&gt; KNXIO (H|M|T) &lt;(ip-address|hostname):port&gt; &lt;phy-adress&gt;</code> <br/>or<br/>
 <code>define &lt;name&gt; KNXIO S &lt;UNIX socket-path&gt; &lt;phy-adress&gt;</code></p>
-<blockquote>
+<ul>
 <b>Connection Types</b> (first parameter):
 <ul>
 <li><b>H</b> Host Mode - connect to a KNX-router with UDP point-point protocol.<br/>
@@ -1305,31 +1329,39 @@ sub KNXIO_errCodes {
 <li><b>T</b> TCP Mode - uses a TCP-connection to KNXD (default port: 6720).<br/>
   This mode is the successor of the TUL-modul, but does not support direct Serial/USB connection to a TPUart-USB Stick.
   If you want to use a TPUart-USB Stick or any other serial KNX-GW, use either the TUL Module, or connect the USB-Stick to KNXD and in turn use modes M,S or T to connect to KNXD.</li>
-<li><b>S</b> Socket mode - communicate via KNXD's UNIX-socket on localhost. default Socket-path: <code>/var/run/knxd</code><br/> 
-  Path might be different, depending on knxd-version or -config specification! </li>
+<li><b>S</b> Socket mode - communicate via KNXD's UNIX-socket on localhost. default Socket-path: <code>/var/run/knx</code><br/> 
+  Path might be different, depending on knxd-version or -config specification! This mode is tested ok with KNXD version 0.14.30. It does NOT work with ver. 0.10.0!</li>
 </ul>
 <br/>
 <b>ip-address:port</b> or <b>hostname:port</b>
 <ul>
-<li>Hostname is supported for mode H and T. Port definition is mandatory.
+<li>Hostname is supported for mode H and T. Port definition is mandatory.</li>
 </ul>
 <br/>
 <b>phy-address</b>
 <ul>
 <li>The physical address is used as the source address of messages sent to KNX network. This address should be one of the defined client pool-addresses of KNXD or Router.</li>
 </ul>
-</blockquote>
+</ul>
 <p>All parameters are mandatory. Pls. ensure that you only have <b>one path</b> between your KNX-Installation and FHEM! 
-  Do not define multiple KNXIO- or KNXTUL- or TUL-definitions at the same time. 
-</p>
+  Do not define multiple KNXIO- or KNXTUL- or TUL-definitions at the same time. </p>
 
-<blockquote>
+<ul>
 Examples:<br/>
-<code>define myKNXGW KNXIO H 192.168.1.201:3671 0.0.50</code><br/>
-<code>define myKNXGW KNXIO M 224.0.23.12:3671 0.0.50</code><br/> 
-<code>define myKNXGW KNXIO S /var/run/knxd 0.0.50</code><br/>
-<code>define myKNXGW KNXIO T 192.168.1.200:6720 0.0.50</code><br/>
-</blockquote>
+<code>define myKNXGW KNXIO H 192.168.1.201:3671 0.0.51</code><br/>
+<code>define myKNXGW KNXIO M 224.0.23.12:3671 0.0.51</code><br/> 
+<code>define myKNXGW KNXIO S /var/run/knx 0.0.51</code><br/>
+<code>define myKNXGW KNXIO T 192.168.1.200:6720 0.0.51</code><br/>
+</ul>
+<br/>
+<ul>
+  Suggested parameters for KNXD (with systemd, Version >= 0.14.30):
+  <br/><code>
+    KNXD_OPTS="-e 0.0.50 -E 0.0.51:8 -D -T -S -b ip:" # knxd acts as multicast client<br/>
+    KNXD_OPTS="-e 0.0.50 -E 0.0.51:8 -D -T -R -S -b ipt:192.168.xx.yy" # connect to a knx-router with ip-addr<br/>
+    KNXD_OPTS="-e 0.0.50 -E 0.0.51:8 -D -T -R -S -single -b tpuarts:/dev/ttyxxx" # connect to a serial/USB KNX GW <br/>
+  </code>
+</ul>
 
 <a id="KNXIO-set"></a>
 <p><strong>Set</strong> - No Set cmd implemented</p>
@@ -1350,7 +1382,7 @@ Examples:<br/>
 <a id="KNXIO-attr-verbose"></a><li><b>verbose</b> - 
   increase verbosity of Log-Messages, system-wide default is set in "global" device. For a detailed description see: <a href="#verbose">global-attr verbose</a> </li> 
 </ul>
-
+<br/>
 </ul>
 
 =end html
