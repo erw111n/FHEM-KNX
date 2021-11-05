@@ -1,7 +1,7 @@
 ### Update History for 00_KNXIO.pm
 ################################
-
 2021-10-09 first published version
 		see readme and cmd-ref for description.
 2021-10-13 next version
 2021-10-22 hostnames supported
+2021-11-05 bugfix

@@ -1,7 +1,8 @@
+*** the module 10_KNX.pm is obsolete in this directory, use 10_KNX.pm from the FHEM SVN!
 *** changes to 00_KNXIO.pm: for details, refer to:
-the module 10_KNX-pm is obsolete in this directory, use 10_KNX.pm from the FHEM SVN!
 *** https://github.com/erw111n/FHEM-KNX/blob/main/updateHistory.txt
 20211009 first commit
 20211013 enable hostnames for mode H & T
 20211022 bugfix - cleanup - hostnames
+20211105 bugfix 
 *** end of changes ***

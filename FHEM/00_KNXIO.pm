@@ -16,7 +16,8 @@
 ### changelog:
 # 19/10/2021 01.60 initial beta version
 #            enable hostnames for mode H & T
-
+# 05/11/2021 fix 'x' outside of string in unpack at ./FHEM/00_KNXIO.pm line 420 (Connection response)
+  
 
 ### sample timer calling recursive! - stolen from MQTT2_CLIENT
 	# Allow some IO inbetween, for overloaded systems
@@ -178,7 +179,6 @@ sub KNXIO_Define {
 	$hash->{NAME}      = $name;
 	$hash->{PhyAddr}   = (defined($arg[4]))?$arg[4]:'0.0.0';
 	$hash->{'.PhyAddrNum'}  = sprintf('%05x',KNXIO_hex2addr($hash->{PhyAddr}));
-#	$hash->{NOTIFYDEV} = "global,$name";  # limit notifies
 
 	KNXIO_closeDev($hash) if ($init_done);
 
@@ -416,17 +416,23 @@ Log3 $name, 5, "H-read cpIP= $contolpointIp[0]\.$contolpointIp[1]\.$contolpointI
 		Log3($name, 4, 'KNXIO_Read: DescriptionResponse received');
 	}
 	elsif ( $responseID == 0x0206) { # Connection response
-		my $phyaddr = 0;
-		($hash->{'.CCID'},$errcode,$phyaddr) = unpack('x6CCx10n',$buf); # save Comm Channel ID,errcode,phy-addr
+###		my $phyaddr = 0;
+		($hash->{'.CCID'},$errcode) = unpack('x6CC',$buf); # save Comm Channel ID,errcode
+###		($hash->{'.CCID'},$errcode,$phyaddr) = unpack('x6CCx10n',$buf); # save Comm Channel ID,errcode,phy-addr
 
-		$hash->{'.PhyAddrNum'} = sprintf('%05x',$phyaddr); # correct Phyaddr.
-		$hash->{PhyAddr}       = KNXIO_addr2hex($phyaddr,2); # correct Phyaddr.
+###		$hash->{'.PhyAddrNum'} = sprintf('%05x',$phyaddr); # correct Phyaddr.
+###		$hash->{PhyAddr}       = KNXIO_addr2hex($phyaddr,2); # correct Phyaddr.
 		RemoveInternalTimer($hash,\&KNXIO_keepAlive);
 		if ($errcode > 0) {
-			Log3($name, 3, 'KNXIO_Read: ConnectionResponse received ' . 'CCID=' . $hash->{'.CCID'} . ' phy-addr=' . $hash->{PhyAddr} . ' Status=' . KNXIO_errCodes($errcode));
+			Log3($name, 3, 'KNXIO_Read: ConnectionResponse received ' . 'CCID=' . $hash->{'.CCID'} . ' Status=' . KNXIO_errCodes($errcode));
+###			Log3($name, 3, 'KNXIO_Read: ConnectionResponse received ' . 'CCID=' . $hash->{'.CCID'} . ' phy-addr=' . $hash->{PhyAddr} . ' Status=' . KNXIO_errCodes($errcode));
 			KNXIO_disconnect($hash);
 			return;
 		}
+		my $phyaddr = unpack('x18n',$buf);
+		$hash->{'.PhyAddrNum'} = sprintf('%05x',$phyaddr); # correct Phyaddr.
+		$hash->{PhyAddr}       = KNXIO_addr2hex($phyaddr,2); # correct Phyaddr.
+
 		InternalTimer(gettimeofday() + 60, \&KNXIO_keepAlive, $hash); # start keepalive
 
 		$hash->{'.SEQUENCECNTR'} = 0;
@@ -476,29 +482,6 @@ sub KNXIO_Ready {
 	return;
 }
 
-=pod
-#####################################
-### not used !!!
-sub KNXIO_Notify {
-	my $ownHash = shift;
-	my $callHash = shift;
-	my $ownName = $ownHash->{NAME};
-	return if (IsDisabled($ownName)); # Return without any further action if the module is disabled
-
-	#Device that created the events
-	my $callName = $callHash->{NAME};
-	my $events = deviceEvents($callHash, 1);
-	if($callName eq 'global') {
-		foreach my $ev (@{$events}) {
-			if ($ev =~ /^INITIALIZED|REREADCFG$/x) {
-				# X_FunctionWhoNeedsAttr($hash);
-			}
-		}
-	}
-	return;
-}
-=cut
-
 #####################################
 sub KNXIO_Write {
 	my $hash = shift;
@@ -509,15 +492,14 @@ sub KNXIO_Write {
 	my $mode = $hash->{model};
 
 	Log3 $name, 5, 'KNXIO_write: started';
-	return if(!defined($fn));
+	return if(!defined($fn) && $fn ne $TULID);
 	return if( ReadingsVal($name,'state','connected') eq 'disconnected');
 
-	$msg = $fn . $msg;
 	Log3 $name, 5, "KNXIO_write: sending $msg";
 
 	my $acpivalues = {r => 0x00, p => 0x01, w => 0x02};
 
-	if ($msg =~ /^C([rwp])([0-9a-f]{5})(.*)$/ix) { # msg format: C<rwp><grpaddr><message>
+	if ($msg =~ /^([rwp])([0-9a-f]{5})(.*)$/ix) { # msg format: <rwp><grpaddr><message>
 
 		my $acpi = $acpivalues->{$1}<<6;
 		my $tcf  = ($acpivalues->{$1}>>2 & 0x03);
@@ -526,7 +508,6 @@ sub KNXIO_Write {
 		my $src = KNXIO_hex2addr($hash->{'.PhyAddrNum'});
 
 		#convert hex-string to array with dezimal values
-#PBP		my @data =  map hex($_), $str =~ /(..)/xg;
 		my @data =  map {hex()} $str =~ /(..)/xg; # PBP 9/2021
 		$data[0] = 0 if (scalar(@data) == 0); # in case of read !!
 		my $datasize =  scalar(@data);
@@ -542,15 +523,11 @@ sub KNXIO_Write {
 		my $completemsg = q{};
 		my $ret = 0;
 
-		if ($mode eq 'M') {
+		if ($mode =~ /^[ST]$/ix ) {  #format: size | 0x0027 | dst | 0 | data
+			$completemsg = pack('nnnCC*',$datasize + 5,0x0027,$dst,0,@data);
+		}
+		elsif ($mode eq 'M') {
 			$completemsg = pack('nnnnnnnCCC*',0x0610,0x0530,$datasize + 16,0x2900,0xBCE0,0,$dst,$datasize,0,@data);
-		}
-		elsif ($mode eq 'S' ) {  #format: size | 0x0027 | src  | dst | 0 | data
-			$completemsg = pack('nnnCC*',$datasize + 5,0x0027,$dst,0,@data);
-#			$completemsg = pack('nnnnCC*',$datasize + 7,0x0027,$src,$dst,0,@data);
-		}
-		elsif ($mode eq 'T' ) {
-			$completemsg = pack('nnnCC*',$datasize + 5,0x0027,$dst,0,@data);
 		}
 		else { # $mode eq 'H'
 			# total length= $size+20 - include 2900BCEO,src,dst,size,0
@@ -558,7 +535,6 @@ sub KNXIO_Write {
 
 			# Timeout function - expect TunnelAck within 1 sec! - but if fhem has a delay....
 			$hash->{'.LASTSENTMSG'} = $completemsg; # save msg for resend in case of TO
-#			$hash->{'.LASTSENTMSG'} = $completemsg if (! exists($hash->{'.LASTSENTMSG'})); # save msg for resend in case of TO
 			InternalTimer(gettimeofday() + 1.5, \&KNXIO_TunnelRequestTO, $hash);
 		}
 
@@ -613,7 +589,6 @@ sub KNXIO_openDevMC {
 
 	my $reopen = (exists($hash->{NEXT_OPEN}))?1:0;
 	my $dev = $hash->{DeviceName}; # (connection-code):ip:port or socket param
-#	my $param = $hash->{DeviceName}; # (connection-code):ip:port or socket param
 #	my (undef, $host, $port, undef) = split(/[\s:]/ix,$dev);
 	my (undef, $host, $port, undef) = split(/[\s:]/ix,$hash->{DEF});
 
@@ -649,23 +624,6 @@ sub KNXIO_openDevMC {
 	$hash->{CD} = $conn;
 	$selectlist{"$name.$dev"} = $hash;
 	return 1;
-
-=pod
-	if (!($conn)) {
-		Log3 ($name, 2, "KNXIO_openDevMC: Can't connect: $ERRNO") if(!$reopen); # PBP
-		KNXIO_disconnect($hash);
-		readingsSingleUpdate($hash, 'state', 'disconnected', 0);
-		$hash->{NEXT_OPEN} = gettimeofday() + 60;
-		return 0;
-	}
-	delete $hash->{NEXT_OPEN};
-	delete $readyfnlist{"$name.$param"};
-	$hash->{MCDev} = $conn;
-#	$hash->{TCPDev} = $conn;
-	$hash->{FD} = $conn->fileno();
-	$selectlist{"$name.$param"} = $hash;
-	return 1; # ok
-=cut
 }
 
 sub KNXIO_ReadMC {
@@ -806,6 +764,7 @@ sub KNXIO_openDev {
 			return;
 		}
 		delete $hash->{NEXT_OPEN};
+		delete $hash->{DevIoJustClosed}; # DevIo
 		$hash->{TCPDev} = $conn;
 		$hash->{FD} = $conn->fileno();
 		delete $readyfnlist{"$name.$param"};
@@ -984,7 +943,7 @@ sub KNXIO_disconnect {
 	return;
 }
 
-### multicast close
+###
 sub KNXIO_closeDev {
 	my $hash = shift;
 	my $name = $hash->{NAME};
@@ -1268,7 +1227,7 @@ $attr{$name}{verbose} = 4; # temp
 		return;
 	}
 
-	Log3($name, 4, 'KNXIO_TunnelRequestTO hit - sending disconnect request');
+	Log3($name, 3, 'KNXIO_TunnelRequestTO hit - sending disconnect request');
 
 	# send disco request
 	my $hpai = pack('nCCCCn',(0x0801,0,0,0,0,0));
