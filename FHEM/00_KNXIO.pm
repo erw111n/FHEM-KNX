@@ -17,12 +17,10 @@
 # 19/10/2021 01.60 initial beta version
 #            enable hostnames for mode H & T
 # 05/11/2021 fix 'x' outside of string in unpack at ./FHEM/00_KNXIO.pm line 420 (Connection response)
-  
+# 30/11/2021 add long text to errorlist
+#            add Log msg on invalid/discarded frames
 
-### sample timer calling recursive! - stolen from MQTT2_CLIENT
-	# Allow some IO inbetween, for overloaded systems
-#	InternalTimer(0, sub{ MQTT2_CLIENT_Read($_[0],1)}, $hash,0) if(length($hash->{BUF}) > 0);
-### end sample
+
 ### capture trace w. FB: http://fritzbox/html/capture.html
 
 package FHEM::KNXIO; ## no critic 'package'
@@ -195,7 +193,6 @@ sub KNXIO_Define {
 
 	Log3($name, 3, "KNXIO_define: opening device $name mode=$mode");
 
-#	return KNXIO_openDev($hash) if ($init_done);
 	return InternalTimer(gettimeofday() + 0.2,\&KNXIO_openDev,$hash);
 }
 
@@ -208,7 +205,6 @@ sub KNXIO_Attr {
 			KNXIO_closeDev($hash);
 		} else {
 			CommandModify(undef, "$name $hash->{DEF}"); # do a defmod ...
-#			CommandDefMod(undef, "-temporary $name $hash->{DEF}"); # do a defmod ...
 		}
 	}
 	return;
@@ -416,16 +412,11 @@ Log3 $name, 5, "H-read cpIP= $contolpointIp[0]\.$contolpointIp[1]\.$contolpointI
 		Log3($name, 4, 'KNXIO_Read: DescriptionResponse received');
 	}
 	elsif ( $responseID == 0x0206) { # Connection response
-###		my $phyaddr = 0;
 		($hash->{'.CCID'},$errcode) = unpack('x6CC',$buf); # save Comm Channel ID,errcode
-###		($hash->{'.CCID'},$errcode,$phyaddr) = unpack('x6CCx10n',$buf); # save Comm Channel ID,errcode,phy-addr
 
-###		$hash->{'.PhyAddrNum'} = sprintf('%05x',$phyaddr); # correct Phyaddr.
-###		$hash->{PhyAddr}       = KNXIO_addr2hex($phyaddr,2); # correct Phyaddr.
 		RemoveInternalTimer($hash,\&KNXIO_keepAlive);
 		if ($errcode > 0) {
 			Log3($name, 3, 'KNXIO_Read: ConnectionResponse received ' . 'CCID=' . $hash->{'.CCID'} . ' Status=' . KNXIO_errCodes($errcode));
-###			Log3($name, 3, 'KNXIO_Read: ConnectionResponse received ' . 'CCID=' . $hash->{'.CCID'} . ' phy-addr=' . $hash->{PhyAddr} . ' Status=' . KNXIO_errCodes($errcode));
 			KNXIO_disconnect($hash);
 			return;
 		}
@@ -960,10 +951,6 @@ sub KNXIO_closeDev {
 	delete $hash->{'.SEQUENCECNTR'};
 	delete $hash->{'.SEQUENCECNTR_W'};
 
-	# Multicast only
-#	delete $hash->{IOReadFn};
-#	delete $hash->{IOWriteFn};
-
 	RemoveInternalTimer($hash);
 
 	Log3 ($name, 5, "KNXIO_closeDev: device $name closed");
@@ -1011,7 +998,8 @@ sub KNXIO_decodeEMI {
 	my @acpicodes = qw(read preply write invalid);
 	my $rwp = $acpicodes[($acpi & 0x03)];
 	if (! defined($rwp) || ($rwp eq 'invalid')) {
-		Log3($name, 3, 'KNXIO_XXX: no valid acpi-code (read/reply/write) received, discard packet');
+		Log3($name, 3, 'KNXIO_decodeEMI: no valid acpi-code (read/reply/write) received, discard packet');
+		Log3($name, 3, "discarded packet: src=$src - dst=$dst - leng=" . scalar(@data) . " - data=" . sprintf('%02x' x scalar(@data),@data));
 		return;
 	}
 
@@ -1065,7 +1053,8 @@ sub KNXIO_decodeCEMI {
 	my @acpicodes = qw(read preply write invalid);
 	my $rwp = $acpicodes[($acpi & 0x03)];
 	if (! defined($rwp) || ($rwp eq 'invalid')) {
-		Log3 $name, 3, 'KNXIO_decodeCEMI: no valid acpi-code (read/reply/write) received, discard packet';
+		Log3($name, 3, 'KNXIO_decodeCEMI: no valid acpi-code (read/reply/write) received, discard packet');
+		Log3($name, 3, "discarded packet: src=$src - dst=$dst - destaddrType=$dest_addrType  - prio=$prio - hop_count=$hop_count - leng=" . scalar(@data) . " - data=" . sprintf('%02x' x scalar(@data),@data));
 		return;
 	}
 
@@ -1237,15 +1226,32 @@ $attr{$name}{verbose} = 4; # temp
 }
 
 ### translate Error-codes to text
+### copied from 03_08_01 & 03_08_02_Core document
 ### all i know...
 sub KNXIO_errCodes {
 	my $errcode = shift;
 
 	my $errlist = {0=>'NO_ERROR',1=>'E_HOST_PROTCOL',2=>'E_VERSION_NOT_SUPPORTED',4=>'E_SEQUENCE_NUMBER',33=>'E_CONNECTION_ID',
-                       34=>'E_CONNECT_TYPE',35=>'E_CONNECTION_OPTION',36=>'E_NO_MORE_CONNECTIONS',38=>'E_DATA_CONNECTION',39=>'E_KNX_CONNECTION',
-                       41=>'E_TUNNELLING_LAYER',};
+            34=>'E_CONNECT_TYPE',35=>'E_CONNECTION_OPTION',36=>'E_NO_MORE_CONNECTIONS',38=>'E_DATA_CONNECTION',39=>'E_KNX_CONNECTION',
+            41=>'E_TUNNELLING_LAYER',
+        };
+	# full text
+	my $errlistfull = {0=>'OK',
+             1=>'The requested host protocol is not supported by the KNXnet/IP device',
+             2=>'The requested protocol version is not supported by the KNXnet/IP device',
+             4=>'The received sequence number is out of order',
+            33=>'The KNXnet/IP Server device cannot find an active data connection with the specified ID',
+            34=>'The requested connection type is not supported by the KNXnet/IP Server device',
+            35=>'One or more requested connection options are not supported by the KNXnet/IP Server device',
+            36=>'The KNXnet/IP Server device cannot accept the new data connection because its maximum amount of concurrent connections is already occupied',
+            38=>'The KNXnet/IP Server device detects an error concerning the data connection with the specified ID',
+            39=>'The KNXnet/IP Server device detects an error concerning the KNX subnetwork connection with the specified ID',
+            41=>'The KNXnet/IP Server device does not support the requested KNXnet/IP Tunnelling layer',
+        };
+
 	my $errtxt = $errlist->{$errcode};
-	$errtxt = 'E_UNDEFINED_ERROR ' . $errcode if (! defined($errtxt));
+	return 'E_UNDEFINED_ERROR ' . $errcode if (! defined($errtxt));
+	$errtxt .= q{: } . $errlistfull->{$errcode}; # concatenate both textsegments
 	return $errtxt; 
 }
 
