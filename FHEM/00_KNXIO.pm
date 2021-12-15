@@ -1,11 +1,12 @@
 ##############################################
-# $Id: 00_KNXIO.pm 001.60 2021-10-19 11:22:33Z erwin $
+# $Id: 00_KNXIO.pm 001.70 2021-12-15 11:22:33Z erwin $
 # new base module for KNX-communication
 # idea: merge some functions of TUL- & KNXTUL-module into one and add more connectivity 
 # function: M - multicast support (like in KNXTUL) - connect to knxd or KNX-router
 #           T - tunnel (like TCP-mode of TUL) - connect to knxd
 #           S - Socket mode - connect to unix-socket of knxd on localhost
 #           H - unicast udp - connect to knxd or KNX-router
+#           X - dummy mode as placeholder for FHEM2FHEM-IO 
 # will never be supported: direct USB-connection to a TUL-USB-stick ( use TUL-Modul or use KNXD->USBstick)
 # features: use DevIo where possible
 #           FIFO - queing of incoming messages (less latency for fhem-system) read= ~4ms vs ~34ms with KNXTUL/TUL
@@ -19,6 +20,10 @@
 # 05/11/2021 fix 'x' outside of string in unpack at ./FHEM/00_KNXIO.pm line 420 (Connection response)
 # 30/11/2021 add long text to errorlist
 #            add Log msg on invalid/discarded frames
+# 15/12/2021 01.70 changed acpi decoding in cemi
+#            add keepalive for mode-H
+#            add support for FHEM2FHEM (mode X)
+#            fix reopen on knxd crash/restart
 
 
 ### capture trace w. FB: http://fritzbox/html/capture.html
@@ -84,6 +89,7 @@ $KNXIO_hasMulticast = 0 if ($EVAL_ERROR); # flag for multicast support
 my $PAT_IP   = '[\d]{1,3}(\.[\d]{1,3}){3}';
 my $PAT_PORT = '[\d]{4,5}';
 my $TULID    = 'C';
+my $reconnectTO = 30; #01.70 Waittime after disconnect
 
 #####################################
 sub Initialize {
@@ -122,10 +128,17 @@ sub KNXIO_Define {
 	my @arg = split(/[\s\t\n]+/x,$def);
 	my $name = $arg[0] // return "KNXIO: no name specified";
 
+	if (scalar(@arg >=3) && $arg[2] eq 'X') { #01.70 dummy for FHEM2FHEM configs
+		$hash->{NAME}  = $name;
+		$hash->{model} = $arg[2];
+		return;
+	}
+
 	return q{KNXIO-define syntax: "define <name> KNXIO <H|M|T> <ip-address|hostname>:<port> <phy-adress>" } . "\n" . 
                q{         or          "define <name> KNXIO S <pathToUnixSocket> <phy-adress>" } if (scalar(@arg < 5));
 
 	my $mode = $arg[2];
+
 	return q{KNXIO-define: invalid mode specified, valid modes are one of: H M S T} if ($mode !~ /[MSHT]/ix);
 	$hash->{model} = $mode; # use it also for fheminfo statistics
 
@@ -164,7 +177,7 @@ sub KNXIO_Define {
 =cut
 			# do it non blocking! - use HttpUtils to resolve hostname
 			$hash->{PORT} = $port; # save port...
-			$hash->{timeout} = 4; # TO for DNS req.
+			$hash->{timeout} = 5; # TO for DNS req.
 			$hash->{DNSWAIT} = 1;
 			my $KNXIO_DnsQ = HttpUtils_gethostbyname($hash,$host,1,\&KNXIO_gethostbyname_Cb);
 		}
@@ -186,7 +199,7 @@ sub KNXIO_Define {
 	$hash->{'.FIFOMSG'}   = q{};
 
 	# Devio-parameters
-	$hash->{nextOpenDelay} = 60;
+	$hash->{nextOpenDelay} = $reconnectTO;
 
 	delete $hash->{NEXT_OPEN};
 	RemoveInternalTimer($hash);
@@ -468,7 +481,7 @@ sub KNXIO_Ready {
 	my $name = $hash->{NAME};
 
 	return if (! $init_done || exists($hash->{DNSWAIT}) || IsDisabled($name) == 1);
-	return if (exists($hash->{NEXT_OPEN}) && $hash->{NEXT_OPEN} < gettimeofday()); # avoid open loop 
+	return if (exists($hash->{NEXT_OPEN}) && $hash->{NEXT_OPEN} > gettimeofday()); #01.70 avoid open loop 
 	return KNXIO_openDev($hash) if(ReadingsVal($hash, 'state', 'disconnected') eq 'disconnected');
 	return;
 }
@@ -658,7 +671,7 @@ sub KNXIO_callback {
 
 	Log3(undef, 5, 'KNXIO_callback called');
 
-	$hash->{nextOpenDelay} = 60;
+	$hash->{nextOpenDelay} = $reconnectTO; 
 	if (defined($err)) {
 		Log3 $hash, 2, "KNXIO_callback: device open $hash->{NAME} failed with: $err" if ($err);
 		$hash->{NEXT_OPEN} = gettimeofday() + $hash->{nextOpenDelay};
@@ -751,11 +764,12 @@ sub KNXIO_openDev {
 			Log3 ($name, 2, "KNXIO_openDev: device $name Can't connect: $ERRNO") if(!$reopen); # PBP
 			$readyfnlist{"$name.$param"} = $hash;
 			readingsSingleUpdate($hash, "state", "disconnected", 0);
-			$hash->{NEXT_OPEN} = gettimeofday() + 60;
+			$hash->{NEXT_OPEN} = gettimeofday() + $reconnectTO;
 			return;
 		}
 		delete $hash->{NEXT_OPEN};
 		delete $hash->{DevIoJustClosed}; # DevIo
+		$conn->setsockopt(SOL_SOCKET, SO_KEEPALIVE, 1); #01.70
 		$hash->{TCPDev} = $conn;
 		$hash->{FD} = $conn->fileno();
 		delete $readyfnlist{"$name.$param"};
@@ -924,8 +938,9 @@ sub KNXIO_disconnect {
 	Log3 ($name, 1, "KNXIO_disconnect: device $name disconnected, waiting to reappear");
 
 	$readyfnlist{"$name.$param"} = $hash;               # Start polling
-	$hash->{nextOpenDelay} = 60;
-	$hash->{NEXT_OPEN} = gettimeofday() + 60;
+#01.70	$hash->{nextOpenDelay} = 60;
+	$hash->{NEXT_OPEN} = gettimeofday() + $reconnectTO; #01.70
+#	$hash->{NEXT_OPEN} = gettimeofday() + $hash->{nextOpenDelay}; #01.70
 
 	# Without the following sleep the open of the device causes a SIGSEGV,
         # and following opens block infinitely. Only a reboot helps.
@@ -994,12 +1009,14 @@ sub KNXIO_decodeEMI {
 
 	Log3($name, 4, "KNXIO_decodeEMI: src=$src - dst=$dst - leng=" . scalar(@data) . " - data=" . sprintf('%02x' x scalar(@data),@data));
 
+	# acpi ref: KNX System Specs 03.03.07
 	$acpi = ((($acpi & 0x03) << 2) | (($data[0] & 0xC0) >> 6));
 	my @acpicodes = qw(read preply write invalid);
-	my $rwp = $acpicodes[($acpi & 0x03)];
+	my $rwp = $acpicodes[$acpi];
+#01.70	my $rwp = $acpicodes[($acpi & 0x03)];
 	if (! defined($rwp) || ($rwp eq 'invalid')) {
-		Log3($name, 3, 'KNXIO_decodeEMI: no valid acpi-code (read/reply/write) received, discard packet');
-		Log3($name, 3, "discarded packet: src=$src - dst=$dst - leng=" . scalar(@data) . " - data=" . sprintf('%02x' x scalar(@data),@data));
+		Log3($name, 4, 'KNXIO_decodeEMI: no valid acpi-code (read/reply/write) received, discard packet');
+		Log3($name, 4, "discarded packet: src=$src - dst=$dst - acpi=" . sprintf('%02x',$acpi) . " - leng=" . scalar(@data) . " - data=" . sprintf('%02x' x scalar(@data),@data));
 		return;
 	}
 
@@ -1051,10 +1068,11 @@ sub KNXIO_decodeCEMI {
 
 	$acpi = ((($acpi & 0x03) << 2) | (($data[0] & 0xC0) >> 6));
 	my @acpicodes = qw(read preply write invalid);
-	my $rwp = $acpicodes[($acpi & 0x03)];
-	if (! defined($rwp) || ($rwp eq 'invalid')) {
-		Log3($name, 3, 'KNXIO_decodeCEMI: no valid acpi-code (read/reply/write) received, discard packet');
-		Log3($name, 3, "discarded packet: src=$src - dst=$dst - destaddrType=$dest_addrType  - prio=$prio - hop_count=$hop_count - leng=" . scalar(@data) . " - data=" . sprintf('%02x' x scalar(@data),@data));
+	my $rwp = $acpicodes[$acpi];
+#01.70	my $rwp = $acpicodes[($acpi & 0x03)];
+	if (! defined($rwp) || ($rwp eq 'invalid')) { # not a groupvalue-read/write/reply
+		Log3($name, 4, 'KNXIO_decodeCEMI: no valid acpi-code (read/reply/write) received, discard packet');
+		Log3($name, 4, "discarded packet: src=$src - dst=$dst - destaddrType=$dest_addrType  - prio=$prio - hop_count=$hop_count - leng=" . scalar(@data) . " - data=" . sprintf('%02x' x scalar(@data),@data));
 		return;
 	}
 

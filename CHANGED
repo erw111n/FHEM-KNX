@@ -1,4 +1,8 @@
 *** changes to 00_KNXIO.pm: for details, refer to:
 *** https://github.com/erw111n/FHEM-KNX/blob/main/updateHistory.txt
 20211130 additional log-msgs - add long error text
+20211215 changed acpi decoding in cemi
+         add keepalive for mode-H
+         add support for FHEM2FHEM (mode X)
+         fix reopen on knxd crash/restart
 *** end of changes ***
