@@ -9,6 +9,7 @@
 #           X - dummy mode as placeholder for FHEM2FHEM-IO 
 # will never be supported: direct USB-connection to a TUL-USB-stick ( use TUL-Modul or use KNXD->USBstick)
 # features: use DevIo where possible
+#           use TcpServerUtils for multicast
 #           FIFO - queing of incoming messages (less latency for fhem-system) read= ~4ms vs ~34ms with KNXTUL/TUL
 #           discard duplicate incoming messages
 #           more robust parser of incoming messages
@@ -24,6 +25,8 @@
 #            add keepalive for mode-H
 #            add support for FHEM2FHEM (mode X)
 #            fix reopen on knxd crash/restart
+# 28/02/2022 change MC support to TcpServerUtils - no need for IO::Socket::Multicast Module!
+# this was knxio2 !!!!
 
 
 ### capture trace w. FB: http://fritzbox/html/capture.html
@@ -33,6 +36,7 @@ package FHEM::KNXIO; ## no critic 'package'
 use strict;
 use warnings;
 use IO::Socket;
+use TcpServerUtils;
 use English qw(-no_match_vars);
 use Time::HiRes qw(gettimeofday);
 use DevIo qw(DevIo_OpenDev DevIo_SimpleWrite DevIo_SimpleRead DevIo_CloseDev DevIo_Disconnected DevIo_IsOpen);
@@ -59,6 +63,7 @@ BEGIN {
           AssignIoPort IOWrite
           CommandDefine CommandDelete CommandModify CommandDefMod
           DevIo_OpenDev DevIo_SimpleWrite DevIo_SimpleRead DevIo_CloseDev DevIo_Disconnected DevIo_IsOpen
+          TcpServer_Open TcpServer_SetLoopbackMode TcpServer_MCastAdd TcpServer_MCastRemove TcpServer_MCastSend TcpServer_MCastRecv TcpServer_Close
           DoTrigger
           Dispatch
           defs modules attr
@@ -76,7 +81,6 @@ BEGIN {
 # export to main context
 GP_Export(qw(Initialize 
              KNXIO_openDev KNXIO_init KNXIO_callback
-             KNXIO_openDevMC KNXIO_ReadMC 
        )
     );
 }
@@ -84,8 +88,6 @@ GP_Export(qw(Initialize
 
 #####################################
 # global vars/constants
-my $KNXIO_hasMulticast = eval "use IO::Socket::Multicast;1";  ## no critic 'ProhibitStringyEval' # flag for multicast support
-$KNXIO_hasMulticast = 0 if ($EVAL_ERROR); # flag for multicast support
 my $PAT_IP   = '[\d]{1,3}(\.[\d]{1,3}){3}';
 my $PAT_PORT = '[\d]{4,5}';
 my $TULID    = 'C';
@@ -107,11 +109,6 @@ sub Initialize {
 #	$hash->{DeleteFn}   = "KNXIO_Delete";
 #	$hash->{DelayedShutdownFn} = "KNXIO_DelayedShutdown;
 #	$hash->{FingerprintFn}     = \&KNXIO_FingerPrint; # temp disabled
-
-	# Multicast DevIO callbackFn
-	$hash->{IOOpenFn}   = \&KNXIO_openDevMC;
-	$hash->{IOReadFn}   = \&KNXIO_ReadMC;
-	$hash->{IOWriteFn}  = \&KNXIO_WriteMC;
 
 	$hash->{AttrList}   = "disable:1 verbose:1,2,3,4,5";
 	$hash->{Clients}    = "KNX";
@@ -151,17 +148,9 @@ sub KNXIO_Define {
 	}
 
 	if ($mode eq q{M}) { # multicast
-		return q{KNXIO-define: mode M (Multicast-suport) not available, pls install "apt-get install libio-socket-multicast-perl" (for debian) ... or "cpan install IO::Socket::Multicast" } if (! $KNXIO_hasMulticast);
-		my ($host1,undef) = split(/\./ix,$host,2);
-		return q{KNXIO-define: Multicast address is not in the range of  224.0.0.0 and 239.255.255.255 (default is 224.0.23.12:3671) } if ($host1 < 224 && $host1 > 239);
-#maybe some time for modified DevIo
-##		$hash->{DeviceName} = q{MC:} . $arg[3]; # for DevIo  need devio support for multicast
-		$hash->{DeviceName} = "FHEM:DEVIO:$name:12345"; # trailing : ? bug in DevIo ? send any number as port....
-#		$hash->{DeviceName} = "FHEM:DEVIO:$name"; # trailing : ? bug in DevIo ? - private patch
-
-		# Multicast DevIO callbackFns
-		$hash->{IOReadFn}   = \&KNXIO_ReadMC;
-		$hash->{IOWriteFn}  = \&KNXIO_WriteMC;
+		my $host1 = (split(/\./ix,$host))[0];
+		return q{KNXIO-define: Multicast address is not in the range of  224.0.0.0 and 239.255.255.255 (default is 224.0.23.12:3671) } if ($host1 < 224 || $host1 > 239);
+		$hash->{DeviceName} = $host . q{:} . $port;
 	}
 	elsif ($mode eq q{S}) {
 		$hash->{DeviceName} = 'UNIX:STREAM:' . $host; # $host= path to socket 
@@ -217,7 +206,7 @@ sub KNXIO_Attr {
 		if ($cmd eq 'set' && defined($aVal) && $aVal == 1) {
 			KNXIO_closeDev($hash);
 		} else {
-			CommandModify(undef, "$name $hash->{DEF}"); # do a defmod ...
+			CommandModify(undef, "-silent $name $hash->{DEF}"); # do a defmod ...
 		}
 	}
 	return;
@@ -233,7 +222,12 @@ sub KNXIO_Read {
 
 	return if IsDisabled($name);
 
-	my $buf = DevIo_SimpleRead($hash);
+	my $buf = undef;
+	if ($mode eq 'M') {
+		my ($rhost,$rport) = TcpServer_MCastRecv($hash, $buf, 1024);
+	} else {
+		$buf = DevIo_SimpleRead($hash);
+	}
 	if (!defined($buf) || length($buf) == 0) {
 		Log3($name,1, 'KNXIO_Read: no data - disconnect');
 		KNXIO_disconnect($hash);
@@ -463,7 +457,7 @@ Log3 $name, 5, "H-read cpIP= $contolpointIp[0]\.$contolpointIp[1]\.$contolpointI
 	}
 	elsif ( $responseID == 0x020A) { # Disconnect response
 		Log3($name, 4, 'KNXIO_Read: DisconnectResponse received - sending connrequ');
-$attr{$name}{verbose} = 3; # temp
+#$attr{$name}{verbose} = 3; # temp
 		$msg = KNXIO_prepareConnRequ($hash);
 	}
 	else {
@@ -532,6 +526,7 @@ sub KNXIO_Write {
 		}
 		elsif ($mode eq 'M') {
 			$completemsg = pack('nnnnnnnCCC*',0x0610,0x0530,$datasize + 16,0x2900,0xBCE0,0,$dst,$datasize,0,@data);
+			$ret = TcpServer_MCastSend($hash,$completemsg); # new TcpServerUtils
 		}
 		else { # $mode eq 'H'
 			# total length= $size+20 - include 2900BCEO,src,dst,size,0
@@ -542,7 +537,7 @@ sub KNXIO_Write {
 			InternalTimer(gettimeofday() + 1.5, \&KNXIO_TunnelRequestTO, $hash);
 		}
 
-		$ret = DevIo_SimpleWrite($hash,$completemsg,0);
+		$ret = DevIo_SimpleWrite($hash,$completemsg,0) if ($mode ne 'M');
 		Log3 $name, 4, 'KNXIO_Write: Mode=' . $mode . ' buf=' . unpack('H*',$completemsg)  . " rc=$ret";
 		return;
 	}
@@ -562,7 +557,12 @@ sub KNXIO_Undef {
 sub KNXIO_Shutdown {
 	my $hash = shift;
 
-	KNXIO_closeDev($hash);
+	my $mode = $hash->{model};
+	if ($mode eq 'M') {
+		TcpServer_Close($hash);
+	} else {
+		KNXIO_closeDev($hash);
+	}
 	RemoveInternalTimer($hash);
 	return;
 }
@@ -585,91 +585,10 @@ sub KNXIO_FingerPrint {
 ### functions called from DevIo ###
 ###################################
 
-### open Multicast udp
-sub KNXIO_openDevMC {
-	my $hash = shift;
-	my $name = $hash->{NAME};
-	my $mode = $hash->{model};
-
-	my $reopen = (exists($hash->{NEXT_OPEN}))?1:0;
-	my $dev = $hash->{DeviceName}; # (connection-code):ip:port or socket param
-#	my (undef, $host, $port, undef) = split(/[\s:]/ix,$dev);
-	my (undef, $host, $port, undef) = split(/[\s:]/ix,$hash->{DEF});
-
-	Log3($name, 5, 'KNXIO_openDevMC called');
-
-	if($hash->{NEXT_OPEN} && gettimeofday() < $hash->{NEXT_OPEN}) {
-##		return &$doCb(undef); # Forum 53309
-		return;
-	}
-
-	my $conn = 0;
-	delete($readyfnlist{"$name.$dev"});
-
-	$conn = IO::Socket::Multicast->new(Proto => 'udp', LocalAddr => $host, LocalPort => $port, ReuseAddr => 1);
-## modelled after DevIo $doTcpTail
-	if ($conn) {
-		delete($hash->{NEXT_OPEN});
-##?		$conn->setsockopt(SOL_SOCKET, SO_KEEPALIVE, 1);
-	} else {
-		Log3 ($name, 2, "KNXIO_openDevMC: $name: Can't connect: $ERRNO") if(!$reopen); # PBP
-		$readyfnlist{"$name.$dev"} = $hash;
-		setReadingsVal($hash, 'state', 'disconnected', TimeNow());
-##		DevIo_setStates($hash, "disconnected");
-		DoTrigger($name, "DISCONNECTED") if(!$reopen);
-		$hash->{NEXT_OPEN} = gettimeofday() + $hash->{nextOpenDelay};
-		return 0;
-	}
-
-##	$hash->{WEBSOCKET} = 1 if($proto eq "ws:");
-	$hash->{MCDev} = $conn;
-##	$hash->{TCPDev} = $conn;
-	$hash->{FD} = $conn->fileno();
-	$hash->{CD} = $conn;
-	$selectlist{"$name.$dev"} = $hash;
-	return 1;
-}
-
-sub KNXIO_ReadMC {
-	my $hash = shift;
-	my $name = $hash->{NAME};
-
-	Log3($name, 5, 'KNXIO_ReadMC called');
-
-	my $buf = q{};
-	my $len = $hash->{MCDev}->recv($buf, 1024);
-#	my $len = $hash->{TCPDev}->recv($buf, 1024);
-	if ( !defined($len) || !$len ) {
-		Log3 ($name,1, 'KNXIO_ReadMC: no data - disconnect');
-		KNXIO_disconnect($hash);
-		return;
-	}
-
-	return $buf;
-}
-
-sub KNXIO_WriteMC {
-	my $hash = shift;
-	my $buf  = shift;
-	my $name = $hash->{NAME};
-
-	Log3 ($name, 5, 'KNXIO_WriteMC called');
-
-	my (undef,$IpPort,undef) = split(/[\s]/ix,$hash->{DEF},3); # strip off Mode & phy-addr.
-	my $ret = $hash->{MCDev}->mcast_send($buf,$IpPort);
-#	my $ret = $hash->{TCPDev}->mcast_send($buf,$IpPort);
-
-	Log3($name, 2, 'KNXIO_WriteMC failed') if ($ret != length($buf));
-
-	return;
-}
-
 ### return from open (sucess/failure)
 sub KNXIO_callback {
 	my $hash = shift;
 	my $err = shift;
-
-	Log3(undef, 5, 'KNXIO_callback called');
 
 	$hash->{nextOpenDelay} = $reconnectTO; 
 	if (defined($err)) {
@@ -741,10 +660,21 @@ sub KNXIO_openDev {
 
 	my $ret = undef; # result
 
-	### multicast DevIo support via FHEM:DEVIO ...
+	### multicast support via TcpServerUtils ...
 	if ($mode eq 'M') {
 		delete $hash->{TCPDev}; # devio ?
-		$ret = DevIo_OpenDev($hash,$reopen,\&KNXIO_init); # no callback calls IOOpenFn, KNXIO_init,...
+		$ret = TcpServer_Open($hash, $port, $host, 1);
+		if (defined($ret)) { # error
+			Log3 ($name, 2, "KNXIO_openDev: $name Can't connect: $ret") if(!$reopen); 
+		} 
+		$ret = TcpServer_MCastAdd($hash,$host);
+		if (defined($ret)) { # error
+			Log3 ($name, 2, "KNXIO_openDev: $name MC add failed: $ret") if(!$reopen);
+		}
+
+		delete $hash->{NEXT_OPEN};
+		delete $readyfnlist{"$name.$param"};
+		$ret = KNXIO_init($hash);
 	}
 
 	### socket mode
@@ -780,7 +710,7 @@ sub KNXIO_openDev {
 		else {
 			Log3 ($name, 3, "KNXIO_openDev: device $name opened");
 		}
-		$ret  = KNXIO_init($hash);
+		$ret = KNXIO_init($hash);
 	}
 
 	### tunneling TCP
@@ -813,21 +743,6 @@ sub KNXIO_init {
 	}
 
 	elsif ($mode eq 'M') {
-		my $reopen = exists($hash->{NEXT_OPEN})?1:0;
-		my $conn = $hash->{MCDev};
-		my (undef, $host, $port, undef) = split(/[\s:]/ix,$hash->{DEF});
-
-		if (! $conn->mcast_add($host)) {
-			Log3 ($name, 2, "KNXIO_init: Can't set MC-group: $host");
-			return 1; # device will be closed
-		}
-		$conn->mcast_loopback(0); # no loopback
-		$conn->mcast_dest($host . q{:} . $port);
-		if($reopen) {
-			Log3 ($name, 3, "KNXIO_init: device $name reappeared");
-		} else {
-			Log3 ($name, 3, "KNXIO_init: device $name opened");
-		}
 	}
 
 #	DoTrigger($name, 'CONNECTED');
@@ -841,9 +756,6 @@ sub KNXIO_init {
 ### returns packed string, ready for sending with DevIo
 sub KNXIO_prepareConnRequ {
 	my $hash = shift;
-
-#	my ($dhost,$destport) = split(/[:]/x,($hash->{DeviceName}));
-#	my @desthost = split(/[.]/x,$dhost);
 
 	### host protocol address information see 3.8.2 core docu
 	###  hdr-size | Host Prococol code (01=udp/02=TCP) | Dest-IPAddr (4bytes) | IP port (2bytes) | hpais (8) | hpaid (8) | ctype (4) 
@@ -938,9 +850,7 @@ sub KNXIO_disconnect {
 	Log3 ($name, 1, "KNXIO_disconnect: device $name disconnected, waiting to reappear");
 
 	$readyfnlist{"$name.$param"} = $hash;               # Start polling
-#01.70	$hash->{nextOpenDelay} = 60;
 	$hash->{NEXT_OPEN} = gettimeofday() + $reconnectTO; #01.70
-#	$hash->{NEXT_OPEN} = gettimeofday() + $hash->{nextOpenDelay}; #01.70
 
 	# Without the following sleep the open of the device causes a SIGSEGV,
         # and following opens block infinitely. Only a reboot helps.
@@ -955,8 +865,13 @@ sub KNXIO_closeDev {
 	my $name = $hash->{NAME};
 	my $param = $hash->{DeviceName};
 
-	DevIo_CloseDev($hash);
-	$hash->{TCPDev}->close() if($hash->{FD});
+	if ($hash->{model} eq 'M') {
+		TcpServer_Close($hash);
+	}
+	else {
+		DevIo_CloseDev($hash);
+		$hash->{TCPDev}->close() if($hash->{FD});
+	}
 
 	delete $hash->{nextOpenDelay};
 	delete $hash->{"${name}_MSGCNT"};
@@ -1013,7 +928,6 @@ sub KNXIO_decodeEMI {
 	$acpi = ((($acpi & 0x03) << 2) | (($data[0] & 0xC0) >> 6));
 	my @acpicodes = qw(read preply write invalid);
 	my $rwp = $acpicodes[$acpi];
-#01.70	my $rwp = $acpicodes[($acpi & 0x03)];
 	if (! defined($rwp) || ($rwp eq 'invalid')) {
 		Log3($name, 4, 'KNXIO_decodeEMI: no valid acpi-code (read/reply/write) received, discard packet');
 		Log3($name, 4, "discarded packet: src=$src - dst=$dst - acpi=" . sprintf('%02x',$acpi) . " - leng=" . scalar(@data) . " - data=" . sprintf('%02x' x scalar(@data),@data));
@@ -1069,7 +983,6 @@ sub KNXIO_decodeCEMI {
 	$acpi = ((($acpi & 0x03) << 2) | (($data[0] & 0xC0) >> 6));
 	my @acpicodes = qw(read preply write invalid);
 	my $rwp = $acpicodes[$acpi];
-#01.70	my $rwp = $acpicodes[($acpi & 0x03)];
 	if (! defined($rwp) || ($rwp eq 'invalid')) { # not a groupvalue-read/write/reply
 		Log3($name, 4, 'KNXIO_decodeCEMI: no valid acpi-code (read/reply/write) received, discard packet');
 		Log3($name, 4, "discarded packet: src=$src - dst=$dst - destaddrType=$dest_addrType  - prio=$prio - hop_count=$hop_count - leng=" . scalar(@data) . " - data=" . sprintf('%02x' x scalar(@data),@data));
@@ -1107,40 +1020,6 @@ sub KNXIO_hex2addr {
 		return ($1 << 12) + ($2 << 8) + $3; # phy Addr
 	}
 	return 0;
-}
-
-### check for duplicate messages
-# return:  nr. deleted / nr. in buffer
-sub KNXIO_chkDupl {
-	my $hash = shift;
-	my $buf  = shift;
-	my $name = $hash->{NAME};
-	my $mode = $hash->{model};
-	my $lenpar = length($hash->{PARTIAL});
-
-	Log3 $name, 5, "KNXIO_chkDupl: e-LENBUF= " . length($buf) . " LENPART= " . length($hash->{PARTIAL}) . " msglen= " . length($buf);
-	if ($mode =~ /[ST]/x) {
-		# msgformat: 0008 0027 00c8 1c0c 00 80
-		substr( $buf, 4, 2, q{..} ); # prepare reqex for duplicate test (ignore src addr)
-#		my $bufrepl = substr('..................',0,length($buf) - 9); # ignore values in PARTIAL
-#		substr( $buf, 9 ,(length($buf) - 9),$bufrepl);  # ignore values in PARTIAL
-	}
-	elsif ($mode eq 'M') {
-		# msgformat: 0610 0530 0011 2900 bcc0 00c8 1c0c 01 00 81
-		substr( $buf, 9, 3, '...' ); # prepare reqex for duplicate test (ignore hop count & src addr)
-	}
-	else {
-		return;
-	}
-	$buf =~ s/([)]|[(])/./gx; # mask )(
-	my $re = qr{$buf}; ## no critic 'RegularExpressions'
-	Log3 $name, 1, 'KNXIO_chkDupl: regex-r= ' . unpack('H*', $buf);
-	Log3 $name, 1, 'KNXIO_chkDupl: PARTIAL= ' . unpack('H*', $hash->{PARTIAL});
-
-	$hash->{PARTIAL} =~ s/${re}//gix; # delete duplicate packets
-
-
-	return ($lenpar - length($hash->{PARTIAL}), length($hash->{PARTIAL})); 
 }
 
 ### check for duplicate messages
@@ -1223,10 +1102,10 @@ sub KNXIO_TunnelRequestTO {
 	my $name = $hash->{NAME};
 
 	RemoveInternalTimer($hash,\&KNXIO_TunnelRequestTO);
-$attr{$name}{verbose} = 4; # temp
+#$attr{$name}{verbose} = 4; # temp
 	# try resend...but only once
 	if (exists($hash->{'.LASTSENTMSG'})) {
-		Log3($name, 4, 'KNXIO_TunnelRequestTO hit - attempt resend');
+		Log3($name, 3, 'KNXIO_TunnelRequestTO hit - attempt resend');
 		my $msg = $hash->{'.LASTSENTMSG'};
 		DevIo_SimpleWrite($hash,$msg,0);
 		delete $hash->{'.LASTSENTMSG'}; 
@@ -1288,7 +1167,7 @@ sub KNXIO_errCodes {
 <a id="KNXIO"></a>
 <h3>KNXIO</h3>
 <ul>
-<p>This is a IO-module for KNX-devices. It provides an interface between FHEM and a KNX-Gateway. The Gateway can be either a KNX-Router or the KNXD-daemon.
+<p>This is a IO-module for KNX-devices. It provides an interface between FHEM and a KNX-Gateway. The Gateway can be either a KNX-Router/KNX-GW or the KNXD-daemon.
    FHEM KNX-devices use this module as IO-Device. This Module does <b>NOT</b> support the deprecated EIB-Module!
 </p>
 
@@ -1307,8 +1186,8 @@ sub KNXIO_errCodes {
   This is the mode also used by ETS when you specify KNXNET/IP Routing as protocol. 
   If you have a KNX-router that supports multicast, you do not need a KNXD installation. Default address:port is 224.0.23.12:3671<br/>
   Pls. ensure that you have only <b>one</b> GW/KNXD in your LAN that feed the multicast tree!<br/>
-  This mode requires the <code>IO::Socket::Multicast</code> perl-module to be installed on yr. system. 
-  On Debian systems this can be achieved by <code>apt-get install libio-socket-multicast-perl</code>.</li>
+  <del>This mode requires the <code>IO::Socket::Multicast</code> perl-module to be installed on yr. system. 
+  On Debian systems this can be achieved by <code>apt-get install libio-socket-multicast-perl</code>.</del></li>
 <li><b>T</b> TCP Mode - uses a TCP-connection to KNXD (default port: 6720).<br/>
   This mode is the successor of the TUL-modul, but does not support direct Serial/USB connection to a TPUart-USB Stick.
   If you want to use a TPUart-USB Stick or any other serial KNX-GW, use either the TUL Module, or connect the USB-Stick to KNXD and in turn use modes M,S or T to connect to KNXD.</li>

@@ -10,3 +10,5 @@
          add keepalive for mode-H
          add support for FHEM2FHEM (mode X)
          fix reopen on knxd crash/restart
+20220322 change MC support to TcpServerUtils 
+         - no need for IO::Socket::Multicast Module!
