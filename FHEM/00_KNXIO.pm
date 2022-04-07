@@ -26,10 +26,10 @@
 #            add support for FHEM2FHEM (mode X)
 #            fix reopen on knxd crash/restart
 # 28/02/2022 change MC support to TcpServerUtils - no need for IO::Socket::Multicast Module!
-# this was knxio2 !!!!
+#            modified phyaddr internal- removed phyaddrnum
+#            moved all hidden internals to $hash->{KNXIOhelpers}->{...}
+# 31/03/2022 fixed typo on line 1106 (exits -> exists)
 
-
-### capture trace w. FB: http://fritzbox/html/capture.html
 
 package FHEM::KNXIO; ## no critic 'package'
 
@@ -177,15 +177,16 @@ sub KNXIO_Define {
 	}
 
 	$hash->{NAME}      = $name;
-	$hash->{PhyAddr}   = (defined($arg[4]))?$arg[4]:'0.0.0';
-	$hash->{'.PhyAddrNum'}  = sprintf('%05x',KNXIO_hex2addr($hash->{PhyAddr}));
+	my $phyaddr        = (defined($arg[4]))?$arg[4]:'0.0.0'; 
+	$hash->{PhyAddr}   = sprintf('%05x',KNXIO_hex2addr($phyaddr));
 
 	KNXIO_closeDev($hash) if ($init_done);
 
-	$hash->{PARTIAL}      = q{};
-	$hash->{'.FIFO'}      = q{}; # read fifo
-	$hash->{'.FIFOTIMER'} = 0;
-	$hash->{'.FIFOMSG'}   = q{};
+	$hash->{PARTIAL} = q{};
+	# define helpers
+	$hash->{KNXIOhelper}->{FIFO}      = q{}; # read fifo
+	$hash->{KNXIOhelper}->{FIFOTIMER} = 0;
+	$hash->{KNXIOhelper}->{FIFOMSG}   = q{};
 
 	# Devio-parameters
 	$hash->{nextOpenDelay} = $reconnectTO;
@@ -266,7 +267,7 @@ sub KNXIO_ReadST {
 
 	# buf complete, continue
 	my @que = ();
-	@que = @{$hash->{'.FIFO'}} if (defined($hash->{'.FIFO'}) && ($hash->{'.FIFO'} ne q{})); #get que from hash
+	@que = @{$hash->{KNXIOhelper}->{FIFO}} if (defined($hash->{KNXIOhelper}->{FIFO}) && ($hash->{KNXIOhelper}->{FIFO} ne q{})); #get que from hash
 	while (length($hash->{PARTIAL}) >= $msglen) {
 		$buf = substr($hash->{PARTIAL},0,$msglen); # get one msg from partial
 		$hash->{PARTIAL} = substr($hash->{PARTIAL}, $msglen); # put rest to partial
@@ -281,7 +282,7 @@ sub KNXIO_ReadST {
 			$msglen = unpack('n',$hash->{PARTIAL}) + 2;
 		}
 	} # /while
-	$hash->{'.FIFO'} = \@que; # push que to fifo
+	$hash->{KNXIOhelper}->{FIFO} = \@que; # push que to fifo
 	return KNXIO_processFIFO($hash);
 }
 
@@ -372,19 +373,19 @@ sub KNXIO_ReadH {
 		($ccid,$rxseqcntr) = unpack('x7CC',$buf);
 
 		my $discardFrame = undef;
-		if ($rxseqcntr == ($hash->{'.SEQUENCECNTR'} - 1)) {
+		if ($rxseqcntr == ($hash->{KNXIOhelper}->{SEQUENCECNTR} - 1)) {
 			Log3($name, 3, 'KNXIO_Read: TunnelRequest received: duplicate message received (seqcntr=' . $rxseqcntr .') - ack it');
-			$hash->{'.SEQUENCECNTR'}--; # one packet duplicate... we ack ist but do not process
+			$hash->{KNXIOhelper}->{SEQUENCECNTR}--; # one packet duplicate... we ack ist but do not process
 			$discardFrame = 1;
 		}
-		if ($rxseqcntr != $hash->{'.SEQUENCECNTR'}) { # really out of sequence
-			Log3($name, 3, 'KNXIO_Read: TunnelRequest received: out of sequence, (seqcntrRx=' . $rxseqcntr . ' (seqcntrTx=' . $hash->{'.SEQUENCECNTR'} . '- no ack & discard');
+		if ($rxseqcntr != $hash->{KNXIOhelper}->{SEQUENCECNTR}) { # really out of sequence
+			Log3($name, 3, 'KNXIO_Read: TunnelRequest received: out of sequence, (seqcntrRx=' . $rxseqcntr . ' (seqcntrTx=' . $hash->{KNXIOhelper}->{SEQUENCECNTR} . '- no ack & discard');
 			return;
 		}
-		Log3($name, 4, 'KNXIO_Read: TunnelRequest received - send Ack and decode. seqcntrRx=' . $hash->{'.SEQUENCECNTR'} ) if (! defined($discardFrame));
-		my $tacksend = pack('nnnCCCC',0x0610,0x0421,10,4,$ccid,$hash->{'.SEQUENCECNTR'},0); # send ack
-		$hash->{'.SEQUENCECNTR'}++;
-		$hash->{'.SEQUENCECNTR'} = 0 if ($hash->{'.SEQUENCECNTR'} > 255);
+		Log3($name, 4, 'KNXIO_Read: TunnelRequest received - send Ack and decode. seqcntrRx=' . $hash->{KNXIOhelper}->{SEQUENCECNTR} ) if (! defined($discardFrame));
+		my $tacksend = pack('nnnCCCC',0x0610,0x0421,10,4,$ccid,$hash->{KNXIOhelper}->{SEQUENCECNTR},0); # send ack
+		$hash->{KNXIOhelper}->{SEQUENCECNTR}++;
+		$hash->{KNXIOhelper}->{SEQUENCECNTR} = 0 if ($hash->{KNXIOhelper}->{SEQUENCECNTR} > 255);
 		DevIo_SimpleWrite($hash,$tacksend,0);
 
 		return if ($discardFrame); # duplicate frame
@@ -405,9 +406,8 @@ sub KNXIO_ReadH {
 #what next ?
 		}
 
-#		delete $hash->{'.LASTSENTMSG'}; # was saved for resend!
-		$hash->{'.SEQUENCECNTR_W'}++;
-		$hash->{'.SEQUENCECNTR_W'} = 0 if ($hash->{'.SEQUENCECNTR_W'} > 255);
+		$hash->{KNXIOhelper}->{SEQUENCECNTR_W}++;
+		$hash->{KNXIOhelper}->{SEQUENCECNTR_W} = 0 if ($hash->{KNXIOhelper}->{SEQUENCECNTR_W} > 255);
 		RemoveInternalTimer($hash,\&KNXIO_TunnelRequestTO); # all ok, stop timer
 	}
 	elsif ( $responseID == 0x0202) { # Search response
@@ -419,28 +419,27 @@ Log3 $name, 5, "H-read cpIP= $contolpointIp[0]\.$contolpointIp[1]\.$contolpointI
 		Log3($name, 4, 'KNXIO_Read: DescriptionResponse received');
 	}
 	elsif ( $responseID == 0x0206) { # Connection response
-		($hash->{'.CCID'},$errcode) = unpack('x6CC',$buf); # save Comm Channel ID,errcode
+		($hash->{KNXIOhelper}->{CCID},$errcode) = unpack('x6CC',$buf); # save Comm Channel ID,errcode
 
 		RemoveInternalTimer($hash,\&KNXIO_keepAlive);
 		if ($errcode > 0) {
-			Log3($name, 3, 'KNXIO_Read: ConnectionResponse received ' . 'CCID=' . $hash->{'.CCID'} . ' Status=' . KNXIO_errCodes($errcode));
+			Log3($name, 3, 'KNXIO_Read: ConnectionResponse received ' . 'CCID=' . $hash->{KNXIOhelper}->{CCID} . ' Status=' . KNXIO_errCodes($errcode));
 			KNXIO_disconnect($hash);
 			return;
 		}
 		my $phyaddr = unpack('x18n',$buf);
-		$hash->{'.PhyAddrNum'} = sprintf('%05x',$phyaddr); # correct Phyaddr.
-		$hash->{PhyAddr}       = KNXIO_addr2hex($phyaddr,2); # correct Phyaddr.
+		$hash->{PhyAddr}       = sprintf('%05x',$phyaddr); # correct Phyaddr.
 
 		InternalTimer(gettimeofday() + 60, \&KNXIO_keepAlive, $hash); # start keepalive
 
-		$hash->{'.SEQUENCECNTR'} = 0;
+		$hash->{KNXIOhelper}->{SEQUENCECNTR} = 0;
 	}
 	elsif ( $responseID == 0x0208) { # ConnectionState response
-		($hash->{'.CCID'}, $errcode) = unpack('x6CC',$buf); 
+		($hash->{KNXIOhelper}->{CCID}, $errcode) = unpack('x6CC',$buf); 
 		RemoveInternalTimer($hash,\&KNXIO_keepAlive);
 		RemoveInternalTimer($hash,\&KNXIO_keepAliveTO); # reset timeout timer
 		if ($errcode > 0) {
-			Log3($name, 3, 'KNXIO_Read: ConnectionStateResponse received ' . 'CCID=' . $hash->{'.CCID'}  . ' Status=' . KNXIO_errCodes($errcode));
+			Log3($name, 3, 'KNXIO_Read: ConnectionStateResponse received ' . 'CCID=' . $hash->{KNXIOhelper}->{CCID}  . ' Status=' . KNXIO_errCodes($errcode));
 			KNXIO_disconnect($hash);
 			return;
 		}
@@ -503,7 +502,7 @@ sub KNXIO_Write {
 		my $tcf  = ($acpivalues->{$1}>>2 & 0x03);
 		my $dst = KNXIO_hex2addr($2);
 		my $str = $3;
-		my $src = KNXIO_hex2addr($hash->{'.PhyAddrNum'});
+		my $src = KNXIO_hex2addr($hash->{PhyAddr});
 
 		#convert hex-string to array with dezimal values
 		my @data =  map {hex()} $str =~ /(..)/xg; # PBP 9/2021
@@ -530,10 +529,10 @@ sub KNXIO_Write {
 		}
 		else { # $mode eq 'H'
 			# total length= $size+20 - include 2900BCEO,src,dst,size,0
-			$completemsg = pack('nnnCCCCnnnnCCC*',0x0610,0x0420,$datasize + 20,4,$hash->{'.CCID'},$hash->{'.SEQUENCECNTR_W'},0,0x1100,0xBCE0,0,$dst,$datasize,0,@data); # send TunnelInd
+			$completemsg = pack('nnnCCCCnnnnCCC*',0x0610,0x0420,$datasize + 20,4,$hash->{KNXIOhelper}->{CCID},$hash->{KNXIOhelper}->{SEQUENCECNTR_W},0,0x1100,0xBCE0,0,$dst,$datasize,0,@data); # send TunnelInd
 
 			# Timeout function - expect TunnelAck within 1 sec! - but if fhem has a delay....
-			$hash->{'.LASTSENTMSG'} = $completemsg; # save msg for resend in case of TO
+			$hash->{KNXIOhelper}->{LASTSENTMSG} = $completemsg; # save msg for resend in case of TO
 			InternalTimer(gettimeofday() + 1.5, \&KNXIO_TunnelRequestTO, $hash);
 		}
 
@@ -766,8 +765,8 @@ sub KNXIO_prepareConnRequ {
 	my $ctype = pack('CCCC',(4,4,2,0)); # 04040200 for udp tunnel_connection/Tunnel_linklayer
 
 	my $connreq = pack('nnn',0x0610,0x0205,0x1A) . $hpais . $hpaid . $ctype;
-	$hash->{'.SEQUENCECNTR'} = 0; # read requests
-	$hash->{'.SEQUENCECNTR_W'} = 0; # write requests
+	$hash->{KNXIOhelper}->{SEQUENCECNTR} = 0; # read requests
+	$hash->{KNXIOhelper}->{SEQUENCECNTR_W} = 0; # write requests
 	RemoveInternalTimer($hash,\&KNXIO_keepAliveTO); # reset timeout timer
 	RemoveInternalTimer($hash,\&KNXIO_keepAlive);
 
@@ -782,7 +781,7 @@ sub KNXIO_dispatch {
 
 	my @que = ();
 	push (@que,$buf);
-	$hash->{'.FIFO'} = \@que;
+	$hash->{KNXIOhelper}->{FIFO} = \@que;
 
 	return KNXIO_processFIFO($hash);
 }
@@ -792,17 +791,16 @@ sub KNXIO_dispatch2 {
 #	my ($hash, $outbuf ) = ($_[0]->{h}, $_[0]->{m});
 	my $hash = shift;
 
-	my $buf = $hash->{'.FIFOMSG'};
+	my $buf = $hash->{KNXIOhelper}->{FIFOMSG};
 	my $name = $hash->{NAME};
-	$hash->{'.FIFOTIMER'} = 0;
+	$hash->{KNXIOhelper}->{FIFOTIMER} = 0;
 
 	$hash->{"${name}_MSGCNT"}++;
 	$hash->{"${name}_TIME"} = TimeNow();
 
 	Dispatch($hash, $buf);
-#	$hash->{'.FIFOMSG'} = q{}; # not required when change to hidden...
 
-	KNXIO_processFIFO($hash) if (defined($hash->{'.FIFO'}) && ($hash->{'.FIFO'} ne q{}));
+	KNXIO_processFIFO($hash) if (defined($hash->{KNXIOhelper}->{FIFO}) && ($hash->{KNXIOhelper}->{FIFO} ne q{}));
 	return;
 }
 
@@ -811,26 +809,26 @@ sub KNXIO_processFIFO {
 	my $hash = shift;
 	my $name = $hash->{NAME};
 
-	if ($hash->{'.FIFOTIMER'} != 0) { # dispatch still running, do a wait loop
+	if ($hash->{KNXIOhelper}->{FIFOTIMER} != 0) { # dispatch still running, do a wait loop
 		Log3 $hash->{NAME}, 4, 'KNXIO_processFIFO: dispatch not complete, waiting';
 		InternalTimer(gettimeofday() + 0.1, \&KNXIO_processFIFO, $hash);
 		return;
 	}
-	my @que = @{$hash->{'.FIFO'}};
+	my @que = @{$hash->{KNXIOhelper}->{FIFO}};
 	my $queentries = scalar(@que);
 	if ($queentries > 0) { # process timer is not running & fifo not empty
-		$hash->{'.FIFOMSG'} = shift (@que);
-		$hash->{'.FIFO'} = \@que;
-		$hash->{'.FIFOTIMER'} = 1;
-		Log3($name, 4, 'KNXIO_processFIFO: ' . $hash->{'.FIFOMSG'} . ' Nr_msgs: '  . $queentries);
+		$hash->{KNXIOhelper}->{FIFOMSG} = shift (@que);
+		$hash->{KNXIOhelper}->{FIFO} = \@que;
+		$hash->{KNXIOhelper}->{FIFOTIMER} = 1;
+		Log3($name, 4, 'KNXIO_processFIFO: ' . $hash->{KNXIOhelper}->{FIFOMSG} . ' Nr_msgs: '  . $queentries);
 #		InternalTimer(gettimeofday() + 1.0, \&KNXIO_dispatch2, $hash); # testing delay
 		InternalTimer(0, \&KNXIO_dispatch2, $hash);
 
 		# delete duplicates from queue
 		while ($queentries > 1) {
 			my $nextbuf = shift (@que);
-			if ($hash->{'.FIFOMSG'} eq $nextbuf) {
-				$hash->{'.FIFO'} = \@que; # discard it 
+			if ($hash->{KNXIOhelper}->{FIFOMSG} eq $nextbuf) {
+				$hash->{KNXIOhelper}->{FIFO} = \@que; # discard it 
 				Log3($name, 4, "KNXIO_processFIFO: - deleted duplicate msg from queue");
 			}
 			$queentries--;
@@ -878,8 +876,8 @@ sub KNXIO_closeDev {
 	delete $hash->{"${name}_TIME"};
 
 #NO!	delete $hash->{'.CCID'};
-	delete $hash->{'.SEQUENCECNTR'};
-	delete $hash->{'.SEQUENCECNTR_W'};
+	delete $hash->{KNXIOhelper}->{SEQUENCECNTR};
+	delete $hash->{KNXIOhelper}->{SEQUENCECNTR_W};
 
 	RemoveInternalTimer($hash);
 
@@ -1079,7 +1077,7 @@ sub KNXIO_keepAlive {
 
 	Log3($name, 4, 'KNXIO_keepalive - expect ConnectionStateResponse');
 
-	my $msg = pack('nnnCCnnnn',(0x0610,0x0207,16,$hash->{'.CCID'},0, 0x0801,0,0,0));
+	my $msg = pack('nnnCCnnnn',(0x0610,0x0207,16,$hash->{KNXIOhelper}->{CCID},0, 0x0801,0,0,0));
 	RemoveInternalTimer($hash,\&KNXIO_keepAlive);
 	DevIo_SimpleWrite($hash,$msg,0); #  send conn state requ
 	InternalTimer(gettimeofday() + 2,\&KNXIO_keepAliveTO,$hash); # set timeout timer - reset by ConnectionStateResponse
@@ -1104,11 +1102,11 @@ sub KNXIO_TunnelRequestTO {
 	RemoveInternalTimer($hash,\&KNXIO_TunnelRequestTO);
 #$attr{$name}{verbose} = 4; # temp
 	# try resend...but only once
-	if (exists($hash->{'.LASTSENTMSG'})) {
+	if (exists($hash->{KNXIOhelper}->{LASTSENTMSG})) {
 		Log3($name, 3, 'KNXIO_TunnelRequestTO hit - attempt resend');
-		my $msg = $hash->{'.LASTSENTMSG'};
+		my $msg = $hash->{KNXIOhelper}->{LASTSENTMSG};
 		DevIo_SimpleWrite($hash,$msg,0);
-		delete $hash->{'.LASTSENTMSG'}; 
+		delete $hash->{KNXIOhelper}->{LASTSENTMSG};
 		InternalTimer(gettimeofday() + 1.5, \&KNXIO_TunnelRequestTO, $hash);
 		return;
 	}
@@ -1117,7 +1115,7 @@ sub KNXIO_TunnelRequestTO {
 
 	# send disco request
 	my $hpai = pack('nCCCCn',(0x0801,0,0,0,0,0));
-	my $msg = pack('nnnCC',(0x0610,0x0209,16,$hash->{'.CCID'},0)) . $hpai;
+	my $msg = pack('nnnCC',(0x0610,0x0209,16,$hash->{KNXIOhelper}->{CCID},0)) . $hpai;
 	DevIo_SimpleWrite($hash,$msg,0); #  send disconn requ
 	return;
 }

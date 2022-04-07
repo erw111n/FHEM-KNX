@@ -12,3 +12,5 @@
          fix reopen on knxd crash/restart
 20220322 change MC support to TcpServerUtils 
          - no need for IO::Socket::Multicast Module!
+20220407 cleanup internal structures
+         prepare for SVN-commit

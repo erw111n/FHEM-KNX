@@ -8,4 +8,6 @@
 20220322 change MC support to TcpServerUtils 
          - no need for IO::Socket::Multicast Module!
          - no changes to other modes...
+20220407 cleanup internal structures
+         prepare for SVN-commit
 *** end of changes ***
